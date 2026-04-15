@@ -195,13 +195,13 @@
       <span class="eyebrow">Voice Ledger Lite</span>
       <h1>Download the Android test build.</h1>
       <p class="lede">
-        This is the smallest Android version of Voice Ledger: local note capture, metadata timestamps,
-        and opt-in Gemma-powered semantic highlights through Ollama with <span class="code">gemma4:e2b</span>.
+        This Android build stores notes locally, builds daily to yearly rollups on-device,
+        and keeps a phone-local semantic index for search without requiring a PC server.
       </p>
       <div class="actions">
-        <a class="button button-primary" id="apk-link" href="https://github.com/rheinze08/voiceledger_lite/releases/latest/download/voice-ledger-lite-debug.apk">Download APK</a>
-        <a class="button button-secondary" href="https://github.com/rheinze08/voiceledger_lite/archive/refs/heads/main.zip">Download Source ZIP</a>
-        <a class="button button-secondary" href="https://github.com/rheinze08/voiceledger_lite/actions/workflows/android-apk.yml">Build New APK</a>
+        <a class="button button-primary" id="apk-link" href="https://github.com/rheinze08/voice_ledger_lite/releases/latest/download/voice-ledger-lite-debug.apk">Download APK</a>
+        <a class="button button-secondary" href="https://github.com/rheinze08/voice_ledger_lite/archive/refs/heads/main.zip">Download Source ZIP</a>
+        <a class="button button-secondary" href="https://github.com/rheinze08/voice_ledger_lite/actions/workflows/android-apk.yml">Build New APK</a>
       </div>
       <div class="status" id="release-status">
         <strong>Checking latest release...</strong>
@@ -215,8 +215,9 @@
         <ul class="meta-list">
           <li>Local Room database for note storage</li>
           <li>Title, body, created timestamp, and updated timestamp on every note</li>
-          <li>Cached semantic rollups so the app stays useful offline after a refresh</li>
-          <li>Ollama host and model settings in-app, defaulting to <span class="code">gemma4:e2b</span></li>
+          <li>Incremental daily, weekly, monthly, and yearly rollups</li>
+          <li>Local semantic search over notes and rollups</li>
+          <li>Optional on-device model imports for summary and embeddings</li>
         </ul>
       </article>
 
@@ -226,7 +227,7 @@
           <li>This download is an Android <span class="code">.apk</span>, not a Windows <span class="code">.exe</span>.</li>
           <li>It is currently a debug build for quick testing, not a Play Store signed release.</li>
           <li>On Android, you may need to allow installs from your browser or file manager.</li>
-          <li>For emulator use, the default Ollama host is <span class="code">http://10.0.2.2:11434</span>.</li>
+          <li>The app can run fully locally on the phone. Imported model files are optional.</li>
         </ul>
       </article>
     </section>
@@ -235,7 +236,7 @@
       <article class="panel">
         <h3>If The APK Link Fails</h3>
         <ol class="steps">
-          <li>Open the <a href="https://github.com/rheinze08/voiceledger_lite/actions/workflows/android-apk.yml">Build Android APK</a> workflow.</li>
+          <li>Open the <a href="https://github.com/rheinze08/voice_ledger_lite/actions/workflows/android-apk.yml">Build Android APK</a> workflow.</li>
           <li>Click <strong>Run workflow</strong>.</li>
           <li>Leave <span class="code">publish_release</span> enabled if you want the release and direct download link updated automatically.</li>
           <li>After the run finishes, refresh this page and the APK button will point to the latest uploaded asset.</li>
@@ -245,9 +246,9 @@
       <article class="panel">
         <h3>Direct Links</h3>
         <ul class="meta-list">
-          <li><a href="https://github.com/rheinze08/voiceledger_lite/releases/latest">Latest release page</a></li>
-          <li><a href="https://github.com/rheinze08/voiceledger_lite/actions">GitHub Actions runs</a></li>
-          <li><a href="https://github.com/rheinze08/voiceledger_lite">Repository</a></li>
+          <li><a href="https://github.com/rheinze08/voice_ledger_lite/releases/latest">Latest release page</a></li>
+          <li><a href="https://github.com/rheinze08/voice_ledger_lite/actions">GitHub Actions runs</a></li>
+          <li><a href="https://github.com/rheinze08/voice_ledger_lite">Repository</a></li>
         </ul>
       </article>
     </section>
@@ -259,7 +260,7 @@
   </main>
 
   <script>
-    const repo = "rheinze08/voiceledger_lite";
+    const repo = "rheinze08/voice_ledger_lite";
     const fallbackAssetUrl = `https://github.com/${repo}/releases/latest/download/voice-ledger-lite-debug.apk`;
     const apkLink = document.getElementById("apk-link");
     const status = document.getElementById("release-status");

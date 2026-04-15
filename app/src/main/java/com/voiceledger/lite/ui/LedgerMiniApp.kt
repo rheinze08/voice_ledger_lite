@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.ListAlt
@@ -42,6 +43,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -57,13 +59,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.voiceledger.lite.data.LocalStats
 import com.voiceledger.lite.data.NoteEntity
-import com.voiceledger.lite.ollama.InsightSnapshot
+import com.voiceledger.lite.semantic.AggregationCheckpoint
+import com.voiceledger.lite.semantic.RollupSnapshot
+import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun LedgerMiniApp(viewModel: LedgerViewModel) {
+fun LedgerMiniApp(
+    viewModel: LedgerViewModel,
+    onImportSummaryModel: () -> Unit,
+    onImportEmbeddingModel: () -> Unit,
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -88,7 +96,7 @@ fun LedgerMiniApp(viewModel: LedgerViewModel) {
                     Column {
                         Text("Voice Ledger Lite")
                         Text(
-                            text = "Local notes with opt-in Gemma highlights",
+                            text = "Phone-local notes, rollups, and semantic search",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -139,17 +147,28 @@ fun LedgerMiniApp(viewModel: LedgerViewModel) {
             AppTab.INSIGHTS -> InsightsScreen(
                 state = state,
                 paddingValues = innerPadding,
-                onRefresh = viewModel::refreshInsights,
+                onRefresh = { viewModel.refreshInsights(false) },
+                onRebuild = { viewModel.refreshInsights(true) },
                 onOpenNote = viewModel::selectNote,
+                onSearchChange = viewModel::updateSearchQuery,
+                onSearch = viewModel::runSearch,
+                onOpenSearchHit = viewModel::openSearchHit,
             )
             AppTab.SETTINGS -> SettingsScreen(
                 state = state,
                 paddingValues = innerPadding,
-                onBaseUrlChange = viewModel::updateBaseUrl,
-                onModelChange = viewModel::updateModel,
-                onWindowDaysChange = viewModel::updateWindowDays,
-                onNoteLimitChange = viewModel::updateNoteLimit,
-                onTimeoutMsChange = viewModel::updateTimeoutMs,
+                onSummaryModelPathChange = viewModel::updateSummaryModelPath,
+                onEmbeddingModelPathChange = viewModel::updateEmbeddingModelPath,
+                onSummaryStartDateChange = viewModel::updateSummaryStartDate,
+                onMaxSourcesChange = viewModel::updateMaxSourcesPerRollup,
+                onEmbeddingDimensionsChange = viewModel::updateEmbeddingDimensions,
+                onSearchLimitChange = viewModel::updateSearchResultLimit,
+                onMaxTokensChange = viewModel::updateMaxTokens,
+                onTopKChange = viewModel::updateTopK,
+                onTemperatureChange = viewModel::updateTemperature,
+                onBackgroundProcessingChange = viewModel::updateBackgroundProcessing,
+                onImportSummaryModel = onImportSummaryModel,
+                onImportEmbeddingModel = onImportEmbeddingModel,
                 onSave = viewModel::saveSettings,
             )
         }
@@ -269,7 +288,7 @@ private fun ComposeScreen(
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            "Everything is written to local SQLite first. Gemma only runs when you request insights.",
+            "Notes are stored locally. Rollups and embeddings are rebuilt on-device from the dirty checkpoint forward.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -305,7 +324,11 @@ private fun InsightsScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
     onRefresh: () -> Unit,
+    onRebuild: () -> Unit,
     onOpenNote: (Long?) -> Unit,
+    onSearchChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onOpenSearchHit: (SemanticSearchHit) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -320,25 +343,26 @@ private fun InsightsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("Semantic rollup", style = MaterialTheme.typography.headlineSmall)
+                    Text("Local aggregation", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        "Gemma reads a capped window of recent notes and returns a concise overview, highlights, and theme buckets.",
+                        "Daily, weekly, monthly, and yearly rollups are generated on-device from the last dirty checkpoint forward.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(
-                        "Window: ${state.settings.windowDays} days | Limit: ${state.settings.noteLimit} notes | Model: ${state.settings.model}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Button(onClick = onRefresh, enabled = !state.isRefreshingInsights) {
-                        if (state.isRefreshingInsights) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onRefresh, enabled = !state.isRefreshingInsights) {
+                            if (state.isRefreshingInsights) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
+                            Text(if (state.isRefreshingInsights) "Running" else "Run now")
                         }
-                        Text(if (state.isRefreshingInsights) "Running Gemma" else "Refresh with Gemma")
+                        OutlinedButton(onClick = onRebuild, enabled = !state.isRefreshingInsights) {
+                            Text("Rebuild since start")
+                        }
                     }
                 }
             }
@@ -347,24 +371,84 @@ private fun InsightsScreen(
             StatsRow(state.localStats)
         }
         item {
-            val insight = state.latestInsight
-            if (insight == null) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    tonalElevation = 1.dp,
-                    shape = RoundedCornerShape(20.dp),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("No cached insight yet.", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Run a refresh after saving a few notes. The last response stays on-device for reuse.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            SearchCard(
+                state = state,
+                onSearchChange = onSearchChange,
+                onSearch = onSearch,
+                onOpenSearchHit = onOpenSearchHit,
+            )
+        }
+        if (state.checkpoints.isNotEmpty()) {
+            item {
+                Text("Checkpoints", style = MaterialTheme.typography.titleLarge)
+            }
+            items(state.checkpoints, key = { it.granularity.name }) { checkpoint ->
+                CheckpointCard(checkpoint)
+            }
+        }
+        if (state.latestRollups.isNotEmpty()) {
+            item {
+                Text("Latest rollups", style = MaterialTheme.typography.titleLarge)
+            }
+            items(state.latestRollups, key = RollupSnapshot::id) { rollup ->
+                RollupCard(rollup, onOpenNote)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchCard(
+    state: LedgerUiState,
+    onSearchChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onOpenSearchHit: (SemanticSearchHit) -> Unit,
+) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Semantic search", style = MaterialTheme.typography.titleLarge)
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = onSearchChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search notes and rollups") },
+                singleLine = true,
+            )
+            Button(onClick = onSearch, enabled = !state.isSearching) {
+                Text(if (state.isSearching) "Searching" else "Search")
+            }
+            if (state.searchResults.isEmpty()) {
+                Text(
+                    "Search results will appear here after the local embedding index has been built.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                state.searchResults.forEach { hit ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenSearchHit(hit) },
+                        shape = RoundedCornerShape(18.dp),
+                        tonalElevation = 2.dp,
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(hit.title, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "${hit.kind} | score ${"%.3f".format(hit.score)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(hit.preview, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
-            } else {
-                InsightCard(insight = insight, onOpenNote = onOpenNote)
             }
         }
     }
@@ -374,64 +458,154 @@ private fun InsightsScreen(
 private fun SettingsScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
-    onBaseUrlChange: (String) -> Unit,
-    onModelChange: (String) -> Unit,
-    onWindowDaysChange: (String) -> Unit,
-    onNoteLimitChange: (String) -> Unit,
-    onTimeoutMsChange: (String) -> Unit,
+    onSummaryModelPathChange: (String) -> Unit,
+    onEmbeddingModelPathChange: (String) -> Unit,
+    onSummaryStartDateChange: (String) -> Unit,
+    onMaxSourcesChange: (String) -> Unit,
+    onEmbeddingDimensionsChange: (String) -> Unit,
+    onSearchLimitChange: (String) -> Unit,
+    onMaxTokensChange: (String) -> Unit,
+    onTopKChange: (String) -> Unit,
+    onTemperatureChange: (String) -> Unit,
+    onBackgroundProcessingChange: (Boolean) -> Unit,
+    onImportSummaryModel: () -> Unit,
+    onImportEmbeddingModel: () -> Unit,
     onSave: () -> Unit,
 ) {
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(paddingValues)
-            .padding(16.dp),
+            .padding(paddingValues),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Ollama settings", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "The app stays local-first. Gemma only runs when you tap the rollup button.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = state.settings.baseUrl,
-            onValueChange = onBaseUrlChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Base URL") },
-            supportingText = { Text("Emulator default: http://10.0.2.2:11434") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = state.settings.model,
-            onValueChange = onModelChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Model") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = state.settings.windowDays.toString(),
-            onValueChange = onWindowDaysChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Window days") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = state.settings.noteLimit.toString(),
-            onValueChange = onNoteLimitChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Note limit") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = state.settings.timeoutMs.toString(),
-            onValueChange = onTimeoutMsChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Timeout ms") },
-            singleLine = true,
-        )
-        Button(onClick = onSave) {
-            Text("Save settings")
+        item {
+            Text("Local AI settings", style = MaterialTheme.typography.headlineSmall)
+        }
+        item {
+            Text(
+                "Import a `.task` summary model for on-device generation and optionally a local text embedding model. If those files are absent, the app falls back to built-in local heuristics.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onImportSummaryModel) {
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import summary model")
+                }
+                OutlinedButton(onClick = onImportEmbeddingModel) {
+                    Text("Import embedding model")
+                }
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.summaryModelPath,
+                onValueChange = onSummaryModelPathChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Summary model path") },
+                minLines = 2,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.embeddingModelPath,
+                onValueChange = onEmbeddingModelPathChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Embedding model path") },
+                minLines = 2,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.summaryStartDate,
+                onValueChange = onSummaryStartDateChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Summarize since (YYYY-MM-DD)") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.maxSourcesPerRollup.toString(),
+                onValueChange = onMaxSourcesChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Max sources per rollup") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.embeddingDimensions.toString(),
+                onValueChange = onEmbeddingDimensionsChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Fallback embedding dimensions") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.searchResultLimit.toString(),
+                onValueChange = onSearchLimitChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search result limit") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.maxTokens.toString(),
+                onValueChange = onMaxTokensChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Summary max tokens") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.topK.toString(),
+                onValueChange = onTopKChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Summary top K") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.temperature.toString(),
+                onValueChange = onTemperatureChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Summary temperature") },
+                singleLine = true,
+            )
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Background processing", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Runs daily when charging so rollups and vector search can catch up off-hours.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = state.settings.backgroundProcessingEnabled,
+                    onCheckedChange = onBackgroundProcessingChange,
+                )
+            }
+        }
+        item {
+            Button(onClick = onSave) {
+                Text("Save settings")
+            }
         }
     }
 }
@@ -467,22 +641,54 @@ private fun StatsTile(label: String, value: String) {
     }
 }
 
+@Composable
+private fun CheckpointCard(checkpoint: AggregationCheckpoint) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(checkpoint.granularity.name.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Last completed: ${checkpoint.lastCompletedEndEpochMs?.let(::formatTimestamp) ?: "Not yet"}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Dirty from: ${checkpoint.dirtyFromEpochMs?.let(::formatTimestamp) ?: "Clean"}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            checkpoint.lastError?.takeIf(String::isNotBlank)?.let { error ->
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun InsightCard(insight: InsightSnapshot, onOpenNote: (Long?) -> Unit) {
+private fun RollupCard(rollup: RollupSnapshot, onOpenNote: (Long?) -> Unit) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                "${formatTimestamp(insight.generatedAtEpochMs)} | ${insight.model} | ${insight.noteCount} notes",
+                "${rollup.granularity.name.lowercase().replaceFirstChar { it.uppercase() }} | ${formatTimestamp(rollup.periodStartEpochMs)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(insight.overview, style = MaterialTheme.typography.bodyLarge)
+            Text(rollup.title, style = MaterialTheme.typography.titleLarge)
+            Text(rollup.overview, style = MaterialTheme.typography.bodyLarge)
             Text("Highlights", style = MaterialTheme.typography.titleMedium)
-            insight.highlights.forEach { highlight ->
+            rollup.highlights.forEach { highlight ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
                         modifier = Modifier
@@ -496,7 +702,7 @@ private fun InsightCard(insight: InsightSnapshot, onOpenNote: (Long?) -> Unit) {
             }
             Text("Themes", style = MaterialTheme.typography.titleMedium)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                insight.themes.forEach { theme ->
+                rollup.themes.forEach { theme ->
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),

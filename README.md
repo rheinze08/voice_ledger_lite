@@ -1,46 +1,60 @@
 # Voice Ledger Lite
 
-Voice Ledger Lite is a small local-first Android client for quick document capture plus opt-in Gemma rollups through Ollama.
+Voice Ledger Lite is a local-first Android journal for quick note capture, incremental rollups, and semantic search that can run entirely on the phone.
 
 ## What it does
 
 - saves notes locally with a title, body, created timestamp, and updated timestamp
 - keeps everything on-device in a Room database
-- lets you point the app at an Ollama server and default to `gemma4:e2b`
-- runs a lightweight semantic rollup over recent notes to surface highlights and themes
-- caches the latest insight locally so the app stays useful offline
+- builds daily, weekly, monthly, and yearly rollups from the last dirty checkpoint forward
+- keeps a local semantic index for notes and rollups
+- supports importing an on-device summary model and an on-device embedding model into app storage
+- falls back to built-in local heuristics when model files are not present
 
-## Lightweight design choices
+## Open Source
 
-- no login flow
-- no backend dependency
-- no background jobs hitting the model unless you tap `Refresh with Gemma`
-- small schema: `notes` and `insights`
-- prompt windows are capped by note count and date range to minimize token usage
+- License: MIT
+- Contributor guidance: see [`CONTRIBUTING.md`](/CONTRIBUTING.md)
+- Security reporting: see [`SECURITY.md`](/SECURITY.md)
+- Community expectations: see [`CODE_OF_CONDUCT.md`](/CODE_OF_CONDUCT.md)
 
-## Project layout
+## Project Layout
 
 - `app/src/main/java/com/voiceledger/lite/data`: Room entities, DAO, repositories, and local settings
-- `app/src/main/java/com/voiceledger/lite/ollama`: thin Ollama client plus structured insight models
+- `app/src/main/java/com/voiceledger/lite/semantic`: local aggregation, embedding, background work, and model import
 - `app/src/main/java/com/voiceledger/lite/ui`: Compose app shell and view model
 
-## Running it
+## Build And Run
 
-This shell does not have Android Studio, Gradle, Java, or the Android SDK on PATH, so the project was scaffolded without a generated Gradle wrapper. Open the repository root in Android Studio and let it finish setup, or run `gradle wrapper` once from a machine with Gradle installed.
+Open the repository root in Android Studio and let it sync the project.
+
+The repo does not currently include the Gradle wrapper, so command-line builds require a machine with Gradle installed first if you want to run `gradle wrapper` or build from a terminal. Android Studio can still import and run the app directly.
 
 Important settings:
 
-- Android emulator default Ollama URL: `http://10.0.2.2:11434`
-- Real device Ollama URL: use your machine's LAN IP, for example `http://192.168.1.42:11434`
-- Default model: `gemma4:e2b`
+- `Summary model path`: optional on-device `.task` bundle for local text generation
+- `Embedding model path`: optional on-device text embedding model for local vector search
+- `Summarize since`: optional `YYYY-MM-DD` floor for rollup backfill
+- Background processing runs daily when charging if enabled
 
-## GitHub distribution
+## Phone Install Path
+
+1. Build the app or download the latest APK from GitHub Releases.
+2. Install the APK on your phone.
+3. Open Voice Ledger Lite.
+4. Add a few notes in `Compose`.
+5. Open `Insights` and tap `Run now` to build local rollups and the local semantic index.
+6. Optional: open `Settings` and import a summary `.task` model plus an embedding model if you want model-backed on-device generation instead of the built-in fallback.
+
+No PC or server connection is required for the app's note storage, rollups, or semantic search.
+
+## GitHub Distribution
 
 The repo includes:
 
-- `Build Android APK` at `.github/workflows/android-apk.yml`
-- `Deploy Download Page` at `.github/workflows/pages.yml`
-- a static Pages site in `docs/index.html`
+- `Build Android APK` at [`.github/workflows/android-apk.yml`](/.github/workflows/android-apk.yml)
+- `Deploy Download Page` at [`.github/workflows/pages.yml`](/.github/workflows/pages.yml)
+- a static Pages site in [`docs/index.html`](/docs/index.html)
 
 The intended path is:
 
@@ -50,9 +64,9 @@ The intended path is:
 
 This is currently a debug APK for fast testing. A signed release build would need a keystore plus GitHub Actions secrets.
 
-## Intended first test
+## Intended First Test
 
 1. Create a few short notes in the `Compose` tab.
-2. Open `Settings` and confirm the Ollama host is reachable.
-3. Open `Insights` and tap `Refresh with Gemma`.
-4. Review the generated overview, highlights, and theme buckets.
+2. Open `Insights` and tap `Run now`.
+3. Review the daily, weekly, monthly, and yearly rollups.
+4. Enter a query in semantic search and confirm local results appear.

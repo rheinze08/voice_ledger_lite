@@ -1,14 +1,22 @@
 package com.voiceledger.lite.ui
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voiceledger.lite.data.LedgerRepository
+import com.voiceledger.lite.data.LocalAiSettings
 import com.voiceledger.lite.data.LocalStats
 import com.voiceledger.lite.data.NoteEntity
-import com.voiceledger.lite.data.OllamaSettings
+import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.data.SettingsStore
-import com.voiceledger.lite.ollama.InsightSnapshot
-import com.voiceledger.lite.ollama.OllamaClient
+import com.voiceledger.lite.semantic.AggregationCheckpoint
+import com.voiceledger.lite.semantic.AggregationScheduler
+import com.voiceledger.lite.semantic.LocalAggregationCoordinator
+import com.voiceledger.lite.semantic.ModelImportTarget
+import com.voiceledger.lite.semantic.ModelStore
+import com.voiceledger.lite.semantic.RollupSnapshot
+import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Duration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,18 +39,24 @@ data class LedgerUiState(
     val editingNoteId: Long? = null,
     val composeTitle: String = "",
     val composeBody: String = "",
-    val settings: OllamaSettings = OllamaSettings(),
+    val settings: LocalAiSettings = LocalAiSettings(),
     val localStats: LocalStats = LocalStats(),
-    val latestInsight: InsightSnapshot? = null,
+    val latestRollups: List<RollupSnapshot> = emptyList(),
+    val checkpoints: List<AggregationCheckpoint> = emptyList(),
+    val searchQuery: String = "",
+    val searchResults: List<SemanticSearchHit> = emptyList(),
     val isRefreshingInsights: Boolean = false,
+    val isSearching: Boolean = false,
     val infoMessage: String? = null,
     val errorMessage: String? = null,
 )
 
 class LedgerViewModel(
+    private val appContext: Context,
     private val repository: LedgerRepository,
     private val settingsStore: SettingsStore,
-    private val ollamaClient: OllamaClient,
+    private val coordinator: LocalAggregationCoordinator,
+    private val modelStore: ModelStore,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(LedgerUiState(settings = settingsStore.load()))
     val uiState: StateFlow<LedgerUiState> = _uiState.asStateFlow()
@@ -61,8 +75,16 @@ class LedgerViewModel(
             }
         }
         viewModelScope.launch {
-            repository.observeInsight(LedgerRepository.RECENT_INSIGHT_KIND).collect { insight ->
-                _uiState.update { it.copy(latestInsight = insight) }
+            repository.observeRollups().collect { rollups ->
+                val latestByGranularity = RollupGranularity.entries.mapNotNull { granularity ->
+                    rollups.filter { it.granularity == granularity }.maxByOrNull(RollupSnapshot::periodEndEpochMs)
+                }
+                _uiState.update { it.copy(latestRollups = latestByGranularity) }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeCheckpoints().collect { checkpoints ->
+                _uiState.update { it.copy(checkpoints = checkpoints.sortedBy(AggregationCheckpoint::granularity)) }
             }
         }
     }
@@ -126,9 +148,9 @@ class LedgerViewModel(
                     composeTitle = "",
                     composeBody = "",
                     infoMessage = if (current.editingNoteId == null) {
-                        "Note saved locally."
+                        "Note saved locally. Aggregation is now dirty from this note onward."
                     } else {
-                        "Note updated."
+                        "Note updated. Dependent rollups will be rebuilt locally."
                     },
                 )
             }
@@ -141,98 +163,166 @@ class LedgerViewModel(
             _uiState.update {
                 it.copy(
                     selectedNoteId = it.notes.firstOrNull { note -> note.id != noteId }?.id,
-                    infoMessage = "Note deleted.",
+                    infoMessage = "Note deleted. Dependent rollups were marked dirty.",
                 )
             }
         }
     }
 
-    fun updateBaseUrl(value: String) {
-        _uiState.update { it.copy(settings = it.settings.copy(baseUrl = value)) }
+    fun updateSummaryModelPath(value: String) {
+        _uiState.update { it.copy(settings = it.settings.copy(summaryModelPath = value)) }
     }
 
-    fun updateModel(value: String) {
-        _uiState.update { it.copy(settings = it.settings.copy(model = value)) }
+    fun updateEmbeddingModelPath(value: String) {
+        _uiState.update { it.copy(settings = it.settings.copy(embeddingModelPath = value)) }
     }
 
-    fun updateWindowDays(value: String) {
+    fun updateSummaryStartDate(value: String) {
+        _uiState.update { it.copy(settings = it.settings.copy(summaryStartDate = value)) }
+    }
+
+    fun updateMaxSourcesPerRollup(value: String) {
         _uiState.update {
-            it.copy(
-                settings = it.settings.copy(
-                    windowDays = value.toIntOrNull() ?: it.settings.windowDays,
-                ),
-            )
+            it.copy(settings = it.settings.copy(maxSourcesPerRollup = value.toIntOrNull() ?: it.settings.maxSourcesPerRollup))
         }
     }
 
-    fun updateNoteLimit(value: String) {
+    fun updateEmbeddingDimensions(value: String) {
         _uiState.update {
-            it.copy(
-                settings = it.settings.copy(
-                    noteLimit = value.toIntOrNull() ?: it.settings.noteLimit,
-                ),
-            )
+            it.copy(settings = it.settings.copy(embeddingDimensions = value.toIntOrNull() ?: it.settings.embeddingDimensions))
         }
     }
 
-    fun updateTimeoutMs(value: String) {
+    fun updateSearchResultLimit(value: String) {
         _uiState.update {
-            it.copy(
-                settings = it.settings.copy(
-                    timeoutMs = value.toIntOrNull() ?: it.settings.timeoutMs,
-                ),
-            )
+            it.copy(settings = it.settings.copy(searchResultLimit = value.toIntOrNull() ?: it.settings.searchResultLimit))
         }
+    }
+
+    fun updateMaxTokens(value: String) {
+        _uiState.update {
+            it.copy(settings = it.settings.copy(maxTokens = value.toIntOrNull() ?: it.settings.maxTokens))
+        }
+    }
+
+    fun updateTopK(value: String) {
+        _uiState.update {
+            it.copy(settings = it.settings.copy(topK = value.toIntOrNull() ?: it.settings.topK))
+        }
+    }
+
+    fun updateTemperature(value: String) {
+        _uiState.update {
+            it.copy(settings = it.settings.copy(temperature = value.toFloatOrNull() ?: it.settings.temperature))
+        }
+    }
+
+    fun updateBackgroundProcessing(enabled: Boolean) {
+        _uiState.update { it.copy(settings = it.settings.copy(backgroundProcessingEnabled = enabled)) }
     }
 
     fun saveSettings() {
         val normalized = _uiState.value.settings.normalized()
         settingsStore.save(normalized)
+        if (normalized.backgroundProcessingEnabled) {
+            AggregationScheduler.schedulePeriodic(appContext)
+        } else {
+            AggregationScheduler.cancelPeriodic(appContext)
+        }
         _uiState.update {
             it.copy(
                 settings = normalized,
-                infoMessage = "Ollama settings saved.",
+                infoMessage = "Local AI settings saved.",
             )
         }
     }
 
-    fun refreshInsights() {
+    fun importModel(target: ModelImportTarget, uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val importedPath = modelStore.importModel(uri, target)
+                val nextSettings = when (target) {
+                    ModelImportTarget.SUMMARY -> _uiState.value.settings.copy(summaryModelPath = importedPath)
+                    ModelImportTarget.EMBEDDING -> _uiState.value.settings.copy(embeddingModelPath = importedPath)
+                }.normalized()
+                settingsStore.save(nextSettings)
+                _uiState.update {
+                    it.copy(
+                        settings = nextSettings,
+                        infoMessage = when (target) {
+                            ModelImportTarget.SUMMARY -> "Summary model imported into app storage."
+                            ModelImportTarget.EMBEDDING -> "Embedding model imported into app storage."
+                        },
+                    )
+                }
+            } catch (exception: Exception) {
+                _uiState.update {
+                    it.copy(errorMessage = exception.message ?: "Model import failed.")
+                }
+            }
+        }
+    }
+
+    fun updateSearchQuery(value: String) {
+        _uiState.update { it.copy(searchQuery = value) }
+    }
+
+    fun runSearch() {
+        val query = _uiState.value.searchQuery.trim()
+        if (query.isBlank()) {
+            _uiState.update { it.copy(searchResults = emptyList()) }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSearching = true, errorMessage = null) }
+            try {
+                val results = coordinator.search(query)
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        searchResults = results,
+                        infoMessage = if (results.isEmpty()) "No semantic matches found yet." else null,
+                    )
+                }
+            } catch (exception: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        errorMessage = exception.message ?: "Search failed.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun openSearchHit(hit: SemanticSearchHit) {
+        hit.noteId?.let(::selectNote)
+    }
+
+    fun refreshInsights(rebuildFromStartDate: Boolean = false) {
         if (_uiState.value.isRefreshingInsights) {
             return
         }
         viewModelScope.launch {
-            val settings = _uiState.value.settings.normalized()
             _uiState.update {
                 it.copy(
-                    settings = settings,
                     isRefreshingInsights = true,
                     errorMessage = null,
                 )
             }
             try {
-                val notes = repository.recentNotes(settings.windowDays, settings.noteLimit)
-                if (notes.isEmpty()) {
-                    _uiState.update {
-                        it.copy(
-                            isRefreshingInsights = false,
-                            errorMessage = "Create a few notes before asking Gemma for an aggregate view.",
-                        )
-                    }
-                    return@launch
-                }
-                val insight = ollamaClient.generateInsight(notes, settings)
-                repository.saveInsight(LedgerRepository.RECENT_INSIGHT_KIND, settings, notes, insight)
+                val message = coordinator.runAggregation(rebuildFromStartDate)
                 _uiState.update {
                     it.copy(
                         isRefreshingInsights = false,
-                        infoMessage = "Gemma refreshed the semantic rollup.",
+                        infoMessage = message,
                     )
                 }
-            } catch (exc: Exception) {
+            } catch (exception: Exception) {
                 _uiState.update {
                     it.copy(
                         isRefreshingInsights = false,
-                        errorMessage = exc.message ?: "Gemma refresh failed.",
+                        errorMessage = exception.message ?: "Local aggregation failed.",
                     )
                 }
             }

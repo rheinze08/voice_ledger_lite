@@ -12,6 +12,9 @@ interface NoteDao {
     @Query("SELECT * FROM notes ORDER BY created_at_epoch_ms DESC")
     fun observeAll(): Flow<List<NoteEntity>>
 
+    @Query("SELECT * FROM notes ORDER BY created_at_epoch_ms ASC")
+    suspend fun allAscending(): List<NoteEntity>
+
     @Query("SELECT * FROM notes WHERE id = :noteId LIMIT 1")
     suspend fun getById(noteId: Long): NoteEntity?
 
@@ -36,10 +39,53 @@ interface NoteDao {
 }
 
 @Dao
-interface InsightDao {
-    @Query("SELECT * FROM insights WHERE kind = :kind LIMIT 1")
-    fun observe(kind: String): Flow<InsightEntity?>
+interface RollupDao {
+    @Query("SELECT * FROM rollups ORDER BY period_end_epoch_ms DESC")
+    fun observeAll(): Flow<List<RollupEntity>>
+
+    @Query(
+        """
+        SELECT * FROM rollups
+        WHERE granularity = :granularity
+        ORDER BY period_end_epoch_ms DESC
+        LIMIT 1
+        """,
+    )
+    fun observeLatest(granularity: String): Flow<RollupEntity?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun replace(insight: InsightEntity)
+    suspend fun replace(rollup: RollupEntity)
+
+    @Query("SELECT * FROM rollups WHERE granularity = :granularity ORDER BY period_start_epoch_ms ASC")
+    suspend fun byGranularityAscending(granularity: String): List<RollupEntity>
+
+    @Query("DELETE FROM rollups WHERE id = :rollupId")
+    suspend fun deleteById(rollupId: String)
+}
+
+@Dao
+interface SemanticEntryDao {
+    @Query("SELECT * FROM semantic_entries")
+    suspend fun all(): List<SemanticEntryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun replace(entry: SemanticEntryEntity)
+
+    @Query("DELETE FROM semantic_entries WHERE source_id = :sourceId")
+    suspend fun deleteBySourceId(sourceId: String)
+
+    @Query("DELETE FROM semantic_entries WHERE entry_id = :entryId")
+    suspend fun deleteById(entryId: String)
+}
+
+@Dao
+interface AggregationCheckpointDao {
+    @Query("SELECT * FROM aggregation_checkpoints ORDER BY granularity ASC")
+    fun observeAll(): Flow<List<AggregationCheckpointEntity>>
+
+    @Query("SELECT * FROM aggregation_checkpoints WHERE granularity = :granularity LIMIT 1")
+    suspend fun get(granularity: String): AggregationCheckpointEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun replace(checkpoint: AggregationCheckpointEntity)
 }
