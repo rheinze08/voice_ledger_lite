@@ -6,6 +6,7 @@ app/build/
 captures/
 .externalNativeBuild/
 .cxx/
+.tools/
 local.properties
 *.iml
 *.jks

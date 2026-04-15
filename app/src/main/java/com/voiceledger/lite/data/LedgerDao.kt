@@ -74,7 +74,7 @@ interface SemanticEntryDao {
     @Query("DELETE FROM semantic_entries WHERE source_id = :sourceId")
     suspend fun deleteBySourceId(sourceId: String)
 
-    @Query("DELETE FROM semantic_entries WHERE entry_id = :entryId")
+    @Query("DELETE FROM semantic_entries WHERE entryId = :entryId")
     suspend fun deleteById(entryId: String)
 }
 

@@ -26,9 +26,22 @@ Voice Ledger Lite is a local-first Android journal for quick note capture, incre
 
 ## Build And Run
 
-Open the repository root in Android Studio and let it sync the project.
+The repo now includes the Gradle wrapper, so command-line builds use the checked-in `gradlew` scripts instead of a separately installed Gradle.
 
-The repo does not currently include the Gradle wrapper, so command-line builds require a machine with Gradle installed first if you want to run `gradle wrapper` or build from a terminal. Android Studio can still import and run the app directly.
+Minimum machine setup:
+
+- JDK 17
+- Android SDK Platform 35
+- Android Build-Tools 35.0.0
+- Either Android Studio or a terminal with `JAVA_HOME` and `ANDROID_SDK_ROOT` configured
+
+Common commands:
+
+- Windows debug build: `.\gradlew.bat :app:assembleDebug`
+- macOS/Linux debug build: `./gradlew :app:assembleDebug`
+- Install to a connected Android device: `.\gradlew.bat :app:installDebug`
+
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 Important settings:
 

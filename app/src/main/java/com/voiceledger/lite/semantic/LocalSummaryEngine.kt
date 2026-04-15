@@ -51,7 +51,6 @@ class LocalSummaryEngine(
             .setModelPath(settings.summaryModelPath)
             .setMaxTokens(settings.maxTokens)
             .setMaxTopK(settings.topK)
-            .setTemperature(settings.temperature)
             .build()
 
         val prompt = buildPrompt(documents, granularity, periodStartEpochMs, periodEndEpochMs)
