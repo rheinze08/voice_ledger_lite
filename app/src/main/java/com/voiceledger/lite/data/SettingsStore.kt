@@ -49,16 +49,6 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
-    fun isInitialSetupDeferred(): Boolean {
-        return prefs.getBoolean(KEY_INITIAL_SETUP_DEFERRED, false)
-    }
-
-    fun setInitialSetupDeferred(value: Boolean) {
-        prefs.edit()
-            .putBoolean(KEY_INITIAL_SETUP_DEFERRED, value)
-            .apply()
-    }
-
     companion object {
         private const val PREFS_NAME = "voice_ledger_lite_settings"
         private const val KEY_SUMMARY_MODEL_PATH = "summary_model_path"
@@ -72,7 +62,6 @@ class SettingsStore(context: Context) {
         private const val KEY_TEMPERATURE = "temperature"
         private const val KEY_BACKGROUND_PROCESSING_ENABLED = "background_processing_enabled"
         private const val KEY_INITIAL_SETUP_COMPLETE = "initial_setup_complete"
-        private const val KEY_INITIAL_SETUP_DEFERRED = "initial_setup_deferred"
 
         private val DEFAULTS = LocalAiSettings()
     }

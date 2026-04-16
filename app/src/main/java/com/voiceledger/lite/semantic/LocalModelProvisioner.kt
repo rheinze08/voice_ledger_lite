@@ -295,7 +295,6 @@ class LocalModelProvisioner(
         val destination = File(modelDir, fileName)
         val partial = File(modelDir, "$fileName.download")
         return runCatching {
-            partial.delete()
             fetchToFile(
                 displayName = displayName,
                 fileName = fileName,
@@ -322,7 +321,6 @@ class LocalModelProvisioner(
                 totalBytes = destination.length(),
             )
         }.getOrElse { exception ->
-            partial.delete()
             val detail = when {
                 exception.message?.contains("HTTP 404") == true ->
                     "The release URL for this model is configured, but the asset has not been published yet (HTTP 404)."
@@ -359,33 +357,48 @@ class LocalModelProvisioner(
         destination: File,
         onStatus: (LocalModelArtifactStatus) -> Unit,
     ) {
+        val existingBytes = destination.takeIf(File::exists)?.length()?.takeIf { it > 0L } ?: 0L
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             instanceFollowRedirects = true
             connectTimeout = 15_000
             readTimeout = 300_000
             setRequestProperty("User-Agent", "VoiceLedgerLite/0.1.0")
+            if (existingBytes > 0L) {
+                setRequestProperty("Range", "bytes=$existingBytes-")
+            }
         }
 
         connection.connect()
         try {
             val responseCode = connection.responseCode
-            require(responseCode in 200..299) { "Server responded with HTTP $responseCode." }
-            val expectedBytes = connection.contentLengthLong.takeIf { it > 0L }
+            require(responseCode in 200..299 || responseCode == HttpURLConnection.HTTP_PARTIAL) {
+                "Server responded with HTTP $responseCode."
+            }
+            val append = responseCode == HttpURLConnection.HTTP_PARTIAL && existingBytes > 0L
+            val expectedBytes = when {
+                append -> connection.contentLengthLong.takeIf { it >= 0L }?.plus(existingBytes)
+                else -> connection.contentLengthLong.takeIf { it > 0L }
+            }
+            if (!append && existingBytes > 0L && destination.exists()) {
+                destination.delete()
+            }
             val availableBytes = destination.parentFile?.usableSpace ?: Long.MAX_VALUE
             if (expectedBytes != null) {
-                require(availableBytes > expectedBytes + MIN_REQUIRED_FREE_SPACE_BYTES) {
+                val remainingBytes = (expectedBytes - if (append) existingBytes else 0L).coerceAtLeast(0L)
+                require(availableBytes > remainingBytes + MIN_REQUIRED_FREE_SPACE_BYTES) {
                     "Not enough free storage for this model download."
                 }
             }
             connection.inputStream.use { input ->
-                FileOutputStream(destination).use { output ->
+                FileOutputStream(destination, append).use { output ->
                     copyWithProgress(
                         input = input,
                         output = output,
                         displayName = displayName,
                         fileName = fileName,
                         totalBytes = expectedBytes,
+                        initialBytes = if (append) existingBytes else 0L,
                         onStatus = onStatus,
                     )
                 }
@@ -401,18 +414,19 @@ class LocalModelProvisioner(
         displayName: String,
         fileName: String,
         totalBytes: Long?,
+        initialBytes: Long,
         onStatus: (LocalModelArtifactStatus) -> Unit,
     ) {
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        var downloadedBytes = 0L
+        var downloadedBytes = initialBytes
         var lastReportedBytes = -1L
         onStatus(
             LocalModelArtifactStatus(
                 displayName = displayName,
                 fileName = fileName,
                 state = LocalModelInstallState.DOWNLOADING,
-                detail = "Downloading model.",
-                downloadedBytes = 0L,
+                detail = if (initialBytes > 0L) "Resuming download." else "Downloading model.",
+                downloadedBytes = downloadedBytes,
                 totalBytes = totalBytes,
             ),
         )
@@ -434,7 +448,7 @@ class LocalModelProvisioner(
                         displayName = displayName,
                         fileName = fileName,
                         state = LocalModelInstallState.DOWNLOADING,
-                        detail = "Downloading model.",
+                        detail = if (initialBytes > 0L) "Resuming download." else "Downloading model.",
                         downloadedBytes = downloadedBytes,
                         totalBytes = totalBytes,
                     ),

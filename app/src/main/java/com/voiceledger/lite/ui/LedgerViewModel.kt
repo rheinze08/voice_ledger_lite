@@ -16,6 +16,7 @@ import com.voiceledger.lite.semantic.GeneratedAnswer
 import com.voiceledger.lite.semantic.LocalAggregationCoordinator
 import com.voiceledger.lite.semantic.LocalModelProvisioner
 import com.voiceledger.lite.semantic.LocalModelProvisioningStatus
+import com.voiceledger.lite.semantic.ModelProvisioningScheduler
 import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
@@ -63,7 +64,6 @@ data class LedgerUiState(
     val searchAnswer: GeneratedAnswer? = null,
     val searchAnswerNotice: String? = null,
     val isInitialSetupComplete: Boolean = false,
-    val isInitialSetupDeferred: Boolean = false,
     val isProvisioningModels: Boolean = true,
     val isRefreshingInsights: Boolean = false,
     val isSearching: Boolean = false,
@@ -78,18 +78,24 @@ class LedgerViewModel(
     private val coordinator: LocalAggregationCoordinator,
 ) : ViewModel() {
     private val modelProvisioner = LocalModelProvisioner(appContext, settingsStore)
+    private var showProvisioningSuccessMessage = false
     private val _uiState = MutableStateFlow(
         LedgerUiState(
             settings = settingsStore.load(),
             isInitialSetupComplete = settingsStore.isInitialSetupComplete(),
-            isInitialSetupDeferred = settingsStore.isInitialSetupDeferred(),
         ),
     )
     val uiState: StateFlow<LedgerUiState> = _uiState.asStateFlow()
 
     init {
         viewModelScope.launch {
-            refreshModelProvisioning(showSuccessMessage = false)
+            observeModelProvisioning()
+        }
+        viewModelScope.launch {
+            syncModelProvisioningStatus()
+            if (!_uiState.value.isInitialSetupComplete) {
+                ModelProvisioningScheduler.ensureRunning(appContext)
+            }
         }
         viewModelScope.launch {
             repository.observeNotes().collect { notes ->
@@ -322,19 +328,9 @@ class LedgerViewModel(
     }
 
     fun retryModelProvisioning() {
-        viewModelScope.launch {
-            refreshModelProvisioning(showSuccessMessage = true)
-        }
-    }
-
-    fun continueWithoutModels() {
-        settingsStore.setInitialSetupDeferred(true)
-        _uiState.update {
-            it.copy(
-                isInitialSetupDeferred = true,
-                infoMessage = "Continuing without local AI for now. Summaries and Ask will stay limited until the models finish installing.",
-            )
-        }
+        showProvisioningSuccessMessage = true
+        ModelProvisioningScheduler.retry(appContext)
+        _uiState.update { it.copy(isProvisioningModels = true) }
     }
 
     fun saveSettings() {
@@ -475,39 +471,46 @@ class LedgerViewModel(
         )
     }
 
-    private suspend fun refreshModelProvisioning(showSuccessMessage: Boolean) {
-        _uiState.update {
-            it.copy(
-                isProvisioningModels = true,
-                modelProvisioning = LocalModelProvisioningStatus.checking(),
-            )
-        }
-        val status = modelProvisioner.ensureInstalled { progress ->
-            _uiState.update {
-                it.copy(
-                    modelProvisioning = progress,
-                    isProvisioningModels = true,
-                )
-            }
-        }
-        val isSetupComplete = status.allReady
-        if (isSetupComplete) {
-            settingsStore.setInitialSetupComplete(true)
-            settingsStore.setInitialSetupDeferred(false)
-        }
+    private suspend fun syncModelProvisioningStatus() {
+        val status = modelProvisioner.currentStatus()
+        settingsStore.setInitialSetupComplete(status.allReady)
         _uiState.update {
             it.copy(
                 settings = settingsStore.load(),
                 modelProvisioning = status,
-                isInitialSetupComplete = settingsStore.isInitialSetupComplete(),
-                isInitialSetupDeferred = settingsStore.isInitialSetupDeferred(),
-                isProvisioningModels = false,
-                infoMessage = if (showSuccessMessage && status.allReady) {
-                    "Local models are installed and ready."
-                } else {
-                    it.infoMessage
-                },
+                isInitialSetupComplete = status.allReady,
             )
+        }
+    }
+
+    private suspend fun observeModelProvisioning() {
+        ModelProvisioningScheduler.workInfosFlow(appContext).collect { workInfos ->
+            val persistedStatus = modelProvisioner.currentStatus()
+            val workStatus = ModelProvisioningScheduler.statusFromWorkInfos(workInfos)
+            val resolvedStatus = when {
+                persistedStatus.allReady -> persistedStatus
+                workStatus != null -> workStatus
+                else -> persistedStatus
+            }
+            val isSetupComplete = persistedStatus.allReady
+            val shouldShowSuccess = (showProvisioningSuccessMessage || !_uiState.value.isInitialSetupComplete) && isSetupComplete
+            if (shouldShowSuccess) {
+                showProvisioningSuccessMessage = false
+            }
+            settingsStore.setInitialSetupComplete(isSetupComplete)
+            _uiState.update { state ->
+                state.copy(
+                    settings = settingsStore.load(),
+                    modelProvisioning = resolvedStatus,
+                    isInitialSetupComplete = isSetupComplete,
+                    isProvisioningModels = ModelProvisioningScheduler.isActive(workInfos),
+                    infoMessage = if (shouldShowSuccess) {
+                        "Local models are installed and ready."
+                    } else {
+                        state.infoMessage
+                    },
+                )
+            }
         }
     }
 }

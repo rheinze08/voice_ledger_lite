@@ -94,11 +94,10 @@ fun LedgerMiniApp(
         }
     }
 
-    if (!state.isInitialSetupComplete && !state.isInitialSetupDeferred) {
+    if (!state.isInitialSetupComplete) {
         InitialSetupScreen(
             state = state,
             onRetry = viewModel::retryModelProvisioning,
-            onContinueWithoutModels = viewModel::continueWithoutModels,
         )
         return
     }
@@ -192,7 +191,6 @@ fun LedgerMiniApp(
 private fun InitialSetupScreen(
     state: LedgerUiState,
     onRetry: () -> Unit,
-    onContinueWithoutModels: () -> Unit,
 ) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -210,7 +208,7 @@ private fun InitialSetupScreen(
                 ) {
                     Text("Setting Up Voice Ledger Lite", style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        "The app is installing its local AI models. The Gemma 4 summary model is a large first-run download, so this works best on Wi-Fi with several gigabytes of free space.",
+                        "The app is installing its local AI models. The Gemma 4 summary model is a large first-run download, so this works best on Wi-Fi with several gigabytes of free space. Once the download starts, Android keeps it running through a foreground notification.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -239,18 +237,15 @@ private fun InitialSetupScreen(
                                 strokeWidth = 2.dp,
                             )
                             Text(
-                                "Downloading and installing models.",
+                                "Downloading and installing models. You can turn the screen off and let Android continue the transfer.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row {
                             Button(onClick = onRetry) {
                                 Text("Retry setup")
-                            }
-                            OutlinedButton(onClick = onContinueWithoutModels) {
-                                Text("Continue in limited mode")
                             }
                         }
                     }
