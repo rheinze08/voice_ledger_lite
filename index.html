@@ -789,21 +789,34 @@
       const image = new Image();
       image.alt = "Voice Ledger Lite screenshot";
       image.loading = "lazy";
-      image.src = src;
       image.addEventListener("load", () => {
-        container.innerHTML = "";
-        container.appendChild(image);
+        container.replaceChildren(image);
       });
+      image.addEventListener("error", () => {
+        container.replaceChildren(
+          Object.assign(document.createElement("div"), {
+            className: "shot-placeholder",
+            textContent: `Could not load ${src}`,
+          }),
+        );
+      });
+      image.src = src;
     }
 
     function tryScreenshot(container, candidates, index = 0) {
       if (index >= candidates.length) {
+        container.replaceChildren(
+          Object.assign(document.createElement("div"), {
+            className: "shot-placeholder",
+            textContent: "Screenshot not found.",
+          }),
+        );
         return;
       }
       const probe = new Image();
-      probe.src = candidates[index];
       probe.addEventListener("load", () => mountScreenshot(container, candidates[index]));
       probe.addEventListener("error", () => tryScreenshot(container, candidates, index + 1));
+      probe.src = candidates[index];
     }
 
     document.querySelectorAll(".shot").forEach((container) => {
