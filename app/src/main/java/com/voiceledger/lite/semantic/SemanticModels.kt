@@ -51,6 +51,18 @@ data class SemanticSearchHit(
     val noteId: Long?,
     val rollupId: String?,
     val granularity: RollupGranularity?,
+    val labels: List<String> = emptyList(),
+)
+
+data class SearchRouteStep(
+    val granularity: RollupGranularity,
+    val title: String,
+    val score: Float,
+)
+
+data class SemanticSearchResponse(
+    val route: List<SearchRouteStep>,
+    val hits: List<SemanticSearchHit>,
 )
 
 data class SemanticDocument(

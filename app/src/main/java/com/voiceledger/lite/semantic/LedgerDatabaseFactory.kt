@@ -10,6 +10,6 @@ object LedgerDatabaseFactory {
             context.applicationContext,
             LedgerDatabase::class.java,
             "voice_ledger_lite.db",
-        ).fallbackToDestructiveMigration().build()
+        ).addMigrations(LedgerDatabase.MIGRATION_2_3).build()
     }
 }

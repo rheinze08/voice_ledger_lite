@@ -4,10 +4,11 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.voiceledger.lite.data.LabelEntity
 import com.voiceledger.lite.data.LedgerRepository
 import com.voiceledger.lite.data.LocalAiSettings
 import com.voiceledger.lite.data.LocalStats
-import com.voiceledger.lite.data.NoteEntity
+import com.voiceledger.lite.data.NoteWithLabels
 import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.data.SettingsStore
 import com.voiceledger.lite.semantic.AggregationCheckpoint
@@ -16,6 +17,7 @@ import com.voiceledger.lite.semantic.LocalAggregationCoordinator
 import com.voiceledger.lite.semantic.ModelImportTarget
 import com.voiceledger.lite.semantic.ModelStore
 import com.voiceledger.lite.semantic.RollupSnapshot
+import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Duration
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,16 +36,22 @@ enum class AppTab {
 
 data class LedgerUiState(
     val selectedTab: AppTab = AppTab.NOTES,
-    val notes: List<NoteEntity> = emptyList(),
+    val notes: List<NoteWithLabels> = emptyList(),
+    val labels: List<LabelEntity> = emptyList(),
     val selectedNoteId: Long? = null,
     val editingNoteId: Long? = null,
     val composeTitle: String = "",
     val composeBody: String = "",
+    val composeSelectedLabelIds: Set<Long> = emptySet(),
+    val labelDraft: String = "",
+    val editingLabelId: Long? = null,
     val settings: LocalAiSettings = LocalAiSettings(),
     val localStats: LocalStats = LocalStats(),
     val latestRollups: List<RollupSnapshot> = emptyList(),
     val checkpoints: List<AggregationCheckpoint> = emptyList(),
     val searchQuery: String = "",
+    val searchSelectedLabelIds: Set<Long> = emptySet(),
+    val searchRoute: List<SearchRouteStep> = emptyList(),
     val searchResults: List<SemanticSearchHit> = emptyList(),
     val isRefreshingInsights: Boolean = false,
     val isSearching: Boolean = false,
@@ -65,11 +73,26 @@ class LedgerViewModel(
         viewModelScope.launch {
             repository.observeNotes().collect { notes ->
                 _uiState.update { state ->
-                    val selectedStillExists = notes.any { it.id == state.selectedNoteId }
+                    val selectedStillExists = notes.any { it.note.id == state.selectedNoteId }
                     state.copy(
                         notes = notes,
                         localStats = calculateStats(notes),
-                        selectedNoteId = if (selectedStillExists) state.selectedNoteId else notes.firstOrNull()?.id,
+                        selectedNoteId = if (selectedStillExists) state.selectedNoteId else notes.firstOrNull()?.note?.id,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeLabels().collect { labels ->
+                val labelIds = labels.map(LabelEntity::id).toSet()
+                _uiState.update { state ->
+                    val editingStillExists = state.editingLabelId?.takeIf(labelIds::contains)
+                    state.copy(
+                        labels = labels,
+                        composeSelectedLabelIds = state.composeSelectedLabelIds.intersect(labelIds),
+                        searchSelectedLabelIds = state.searchSelectedLabelIds.intersect(labelIds),
+                        editingLabelId = editingStillExists,
+                        labelDraft = if (editingStillExists == null) "" else state.labelDraft,
                     )
                 }
             }
@@ -105,14 +128,26 @@ class LedgerViewModel(
         _uiState.update { it.copy(composeBody = value) }
     }
 
-    fun loadNoteIntoComposer(note: NoteEntity) {
+    fun toggleComposeLabel(labelId: Long) {
+        _uiState.update { state ->
+            val next = if (labelId in state.composeSelectedLabelIds) {
+                state.composeSelectedLabelIds - labelId
+            } else {
+                state.composeSelectedLabelIds + labelId
+            }
+            state.copy(composeSelectedLabelIds = next)
+        }
+    }
+
+    fun loadNoteIntoComposer(note: NoteWithLabels) {
         _uiState.update {
             it.copy(
                 selectedTab = AppTab.COMPOSE,
-                editingNoteId = note.id,
-                composeTitle = note.title,
-                composeBody = note.body,
-                selectedNoteId = note.id,
+                editingNoteId = note.note.id,
+                composeTitle = note.note.title,
+                composeBody = note.note.body,
+                composeSelectedLabelIds = note.labels.map(LabelEntity::id).toSet(),
+                selectedNoteId = note.note.id,
             )
         }
     }
@@ -123,6 +158,7 @@ class LedgerViewModel(
                 editingNoteId = null,
                 composeTitle = "",
                 composeBody = "",
+                composeSelectedLabelIds = emptySet(),
             )
         }
     }
@@ -139,7 +175,12 @@ class LedgerViewModel(
         }
 
         viewModelScope.launch {
-            val savedId = repository.saveNote(current.editingNoteId, title, body)
+            val savedId = repository.saveNote(
+                noteId = current.editingNoteId,
+                title = title,
+                body = body,
+                labelIds = current.composeSelectedLabelIds,
+            )
             _uiState.update {
                 it.copy(
                     selectedTab = AppTab.NOTES,
@@ -147,6 +188,7 @@ class LedgerViewModel(
                     editingNoteId = null,
                     composeTitle = "",
                     composeBody = "",
+                    composeSelectedLabelIds = emptySet(),
                     infoMessage = if (current.editingNoteId == null) {
                         "Note saved locally. Aggregation is now dirty from this note onward."
                     } else {
@@ -162,8 +204,73 @@ class LedgerViewModel(
             repository.deleteNote(noteId)
             _uiState.update {
                 it.copy(
-                    selectedNoteId = it.notes.firstOrNull { note -> note.id != noteId }?.id,
+                    selectedNoteId = it.notes.firstOrNull { note -> note.note.id != noteId }?.note?.id,
                     infoMessage = "Note deleted. Dependent rollups were marked dirty.",
+                )
+            }
+        }
+    }
+
+    fun updateLabelDraft(value: String) {
+        _uiState.update { it.copy(labelDraft = value) }
+    }
+
+    fun editLabel(labelId: Long) {
+        val label = _uiState.value.labels.firstOrNull { it.id == labelId } ?: return
+        _uiState.update {
+            it.copy(
+                editingLabelId = label.id,
+                labelDraft = label.name,
+                selectedTab = AppTab.SETTINGS,
+            )
+        }
+    }
+
+    fun clearLabelEditor() {
+        _uiState.update { it.copy(editingLabelId = null, labelDraft = "") }
+    }
+
+    fun saveLabel() {
+        val current = _uiState.value
+        val labelDraft = current.labelDraft.trim()
+        if (labelDraft.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Label name cannot be empty.") }
+            return
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                repository.saveLabel(current.editingLabelId, labelDraft)
+            }.onSuccess { saved ->
+                _uiState.update {
+                    it.copy(
+                        editingLabelId = null,
+                        labelDraft = "",
+                        infoMessage = if (current.editingLabelId == null) {
+                            "\"${saved.name}\" added."
+                        } else {
+                            "\"${saved.name}\" updated."
+                        },
+                    )
+                }
+            }.onFailure { exception ->
+                _uiState.update {
+                    it.copy(errorMessage = exception.message ?: "Label save failed.")
+                }
+            }
+        }
+    }
+
+    fun deleteEditingLabel() {
+        val labelId = _uiState.value.editingLabelId ?: return
+        val labelName = _uiState.value.labels.firstOrNull { it.id == labelId }?.name ?: "Label"
+        viewModelScope.launch {
+            repository.deleteLabel(labelId)
+            _uiState.update {
+                it.copy(
+                    editingLabelId = null,
+                    labelDraft = "",
+                    infoMessage = "\"$labelName\" deleted.",
                 )
             }
         }
@@ -232,7 +339,7 @@ class LedgerViewModel(
         _uiState.update {
             it.copy(
                 settings = normalized,
-                infoMessage = "Local AI settings saved.",
+                infoMessage = "Settings saved.",
             )
         }
     }
@@ -267,21 +374,34 @@ class LedgerViewModel(
         _uiState.update { it.copy(searchQuery = value) }
     }
 
+    fun toggleSearchLabel(labelId: Long) {
+        _uiState.update { state ->
+            val next = if (labelId in state.searchSelectedLabelIds) {
+                state.searchSelectedLabelIds - labelId
+            } else {
+                state.searchSelectedLabelIds + labelId
+            }
+            state.copy(searchSelectedLabelIds = next)
+        }
+    }
+
     fun runSearch() {
-        val query = _uiState.value.searchQuery.trim()
+        val current = _uiState.value
+        val query = current.searchQuery.trim()
         if (query.isBlank()) {
-            _uiState.update { it.copy(searchResults = emptyList()) }
+            _uiState.update { it.copy(searchRoute = emptyList(), searchResults = emptyList()) }
             return
         }
         viewModelScope.launch {
             _uiState.update { it.copy(isSearching = true, errorMessage = null) }
             try {
-                val results = coordinator.search(query)
+                val response = coordinator.search(query, current.searchSelectedLabelIds)
                 _uiState.update {
                     it.copy(
                         isSearching = false,
-                        searchResults = results,
-                        infoMessage = if (results.isEmpty()) "No semantic matches found yet." else null,
+                        searchRoute = response.route,
+                        searchResults = response.hits,
+                        infoMessage = if (response.hits.isEmpty()) "No semantic matches found for that query." else null,
                     )
                 }
             } catch (exception: Exception) {
@@ -337,14 +457,14 @@ class LedgerViewModel(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    private fun calculateStats(notes: List<NoteEntity>): LocalStats {
+    private fun calculateStats(notes: List<NoteWithLabels>): LocalStats {
         val now = System.currentTimeMillis()
         val weekAgo = now - Duration.ofDays(7).toMillis()
         val monthAgo = now - Duration.ofDays(30).toMillis()
         return LocalStats(
             totalNotes = notes.size,
-            notesThisWeek = notes.count { it.createdAtEpochMs >= weekAgo },
-            notesThisMonth = notes.count { it.createdAtEpochMs >= monthAgo },
+            notesThisWeek = notes.count { it.note.createdAtEpochMs >= weekAgo },
+            notesThisMonth = notes.count { it.note.createdAtEpochMs >= monthAgo },
         )
     }
 }

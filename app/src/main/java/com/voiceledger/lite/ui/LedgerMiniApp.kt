@@ -26,13 +26,13 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -45,6 +45,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,10 +58,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.voiceledger.lite.data.LabelEntity
 import com.voiceledger.lite.data.LocalStats
-import com.voiceledger.lite.data.NoteEntity
+import com.voiceledger.lite.data.NoteWithLabels
 import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.RollupSnapshot
+import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Instant
 import java.time.ZoneId
@@ -97,7 +100,7 @@ fun LedgerMiniApp(
                     Column {
                         Text("Voice Ledger Lite")
                         Text(
-                            text = "Phone-local notes, rollups, and semantic search",
+                            text = "Phone-local notes, labels, rollups, and search",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -142,6 +145,7 @@ fun LedgerMiniApp(
                 paddingValues = innerPadding,
                 onTitleChange = viewModel::updateComposeTitle,
                 onBodyChange = viewModel::updateComposeBody,
+                onToggleLabel = viewModel::toggleComposeLabel,
                 onSave = viewModel::saveDraft,
                 onClear = viewModel::clearComposer,
             )
@@ -152,12 +156,18 @@ fun LedgerMiniApp(
                 onRebuild = { viewModel.refreshInsights(true) },
                 onOpenNote = viewModel::selectNote,
                 onSearchChange = viewModel::updateSearchQuery,
+                onToggleSearchLabel = viewModel::toggleSearchLabel,
                 onSearch = viewModel::runSearch,
                 onOpenSearchHit = viewModel::openSearchHit,
             )
             AppTab.SETTINGS -> SettingsScreen(
                 state = state,
                 paddingValues = innerPadding,
+                onLabelDraftChange = viewModel::updateLabelDraft,
+                onEditLabel = viewModel::editLabel,
+                onClearLabelEditor = viewModel::clearLabelEditor,
+                onSaveLabel = viewModel::saveLabel,
+                onDeleteLabel = viewModel::deleteEditingLabel,
                 onSummaryModelPathChange = viewModel::updateSummaryModelPath,
                 onEmbeddingModelPathChange = viewModel::updateEmbeddingModelPath,
                 onSummaryStartDateChange = viewModel::updateSummaryStartDate,
@@ -184,15 +194,16 @@ private val AppTab.label: String
         AppTab.SETTINGS -> "Settings"
     }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NotesScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
     onSelect: (Long?) -> Unit,
-    onEdit: (NoteEntity) -> Unit,
+    onEdit: (NoteWithLabels) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
-    val selectedNote = state.notes.firstOrNull { it.id == state.selectedNoteId }
+    val selectedNote = state.notes.firstOrNull { it.note.id == state.selectedNoteId }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -214,18 +225,21 @@ private fun NotesScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(selectedNote.title, style = MaterialTheme.typography.titleLarge)
+                        Text(selectedNote.note.title, style = MaterialTheme.typography.titleLarge)
                         Text(
-                            formatTimestamp(selectedNote.createdAtEpochMs),
+                            formatTimestamp(selectedNote.note.createdAtEpochMs),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Text(selectedNote.body, style = MaterialTheme.typography.bodyMedium)
+                        if (selectedNote.labels.isNotEmpty()) {
+                            LabelStrip(labels = selectedNote.labels)
+                        }
+                        Text(selectedNote.note.body, style = MaterialTheme.typography.bodyMedium)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(onClick = { onEdit(selectedNote) }) {
                                 Text("Edit")
                             }
-                            OutlinedButton(onClick = { onDelete(selectedNote.id) }) {
+                            OutlinedButton(onClick = { onDelete(selectedNote.note.id) }) {
                                 Text("Delete")
                             }
                         }
@@ -233,13 +247,13 @@ private fun NotesScreen(
                 }
             }
         }
-        items(state.notes, key = NoteEntity::id) { note ->
+        items(state.notes, key = { it.note.id }) { note ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onSelect(note.id) },
+                    .clickable { onSelect(note.note.id) },
                 colors = CardDefaults.cardColors(
-                    containerColor = if (state.selectedNoteId == note.id) {
+                    containerColor = if (state.selectedNoteId == note.note.id) {
                         MaterialTheme.colorScheme.secondaryContainer
                     } else {
                         MaterialTheme.colorScheme.surface
@@ -250,14 +264,17 @@ private fun NotesScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(note.title, style = MaterialTheme.typography.titleMedium)
+                    Text(note.note.title, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        formatTimestamp(note.createdAtEpochMs),
+                        formatTimestamp(note.note.createdAtEpochMs),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (note.labels.isNotEmpty()) {
+                        LabelStrip(labels = note.labels)
+                    }
                     Text(
-                        text = note.body,
+                        text = note.note.body,
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
@@ -268,12 +285,14 @@ private fun NotesScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ComposeScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
     onTitleChange: (String) -> Unit,
     onBodyChange: (String) -> Unit,
+    onToggleLabel: (Long) -> Unit,
     onSave: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -289,7 +308,7 @@ private fun ComposeScreen(
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            "Notes are stored locally. Rollups and embeddings are rebuilt on-device from the dirty checkpoint forward.",
+            "Notes stay local. Labels help with note-level narrowing, and rollups rebuild from the dirty checkpoint forward.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -309,6 +328,24 @@ private fun ComposeScreen(
             label = { Text("Body") },
             minLines = 10,
         )
+        Text("Labels", style = MaterialTheme.typography.titleMedium)
+        if (state.labels.isEmpty()) {
+            Text(
+                "Create reusable labels in Settings, then come back here to tag notes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.labels.forEach { label ->
+                    FilterChip(
+                        selected = label.id in state.composeSelectedLabelIds,
+                        onClick = { onToggleLabel(label.id) },
+                        label = { Text(label.name) },
+                    )
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onSave) {
                 Text(if (state.editingNoteId == null) "Save note" else "Update note")
@@ -328,6 +365,7 @@ private fun InsightsScreen(
     onRebuild: () -> Unit,
     onOpenNote: (Long?) -> Unit,
     onSearchChange: (String) -> Unit,
+    onToggleSearchLabel: (Long) -> Unit,
     onSearch: () -> Unit,
     onOpenSearchHit: (SemanticSearchHit) -> Unit,
 ) {
@@ -346,7 +384,7 @@ private fun InsightsScreen(
                 ) {
                     Text("Local aggregation", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        "Daily, weekly, monthly, and yearly rollups are generated on-device from the last dirty checkpoint forward.",
+                        "Search routes through yearly, monthly, weekly, and daily rollups before it drops to raw notes.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -375,6 +413,7 @@ private fun InsightsScreen(
             SearchCard(
                 state = state,
                 onSearchChange = onSearchChange,
+                onToggleSearchLabel = onToggleSearchLabel,
                 onSearch = onSearch,
                 onOpenSearchHit = onOpenSearchHit,
             )
@@ -398,10 +437,12 @@ private fun InsightsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SearchCard(
     state: LedgerUiState,
     onSearchChange: (String) -> Unit,
+    onToggleSearchLabel: (Long) -> Unit,
     onSearch: () -> Unit,
     onOpenSearchHit: (SemanticSearchHit) -> Unit,
 ) {
@@ -410,20 +451,40 @@ private fun SearchCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("Semantic search", style = MaterialTheme.typography.titleLarge)
+            Text("Hierarchical search", style = MaterialTheme.typography.titleLarge)
             OutlinedTextField(
                 value = state.searchQuery,
                 onValueChange = onSearchChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Search notes and rollups") },
+                label = { Text("Ask across notes and rollups") },
                 singleLine = true,
             )
+            if (state.labels.isNotEmpty()) {
+                Text(
+                    "Optional labels narrow the raw-note layer while the timeline routing stays broad.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.labels.forEach { label ->
+                        FilterChip(
+                            selected = label.id in state.searchSelectedLabelIds,
+                            onClick = { onToggleSearchLabel(label.id) },
+                            label = { Text(label.name) },
+                        )
+                    }
+                }
+            }
             Button(onClick = onSearch, enabled = !state.isSearching) {
                 Text(if (state.isSearching) "Searching" else "Search")
             }
+            if (state.searchRoute.isNotEmpty()) {
+                Text("Route", style = MaterialTheme.typography.titleMedium)
+                RouteStrip(route = state.searchRoute)
+            }
             if (state.searchResults.isEmpty()) {
                 Text(
-                    "Search results will appear here after the local embedding index has been built.",
+                    "Run aggregation first, then search. Results will show the best route through time before surfacing notes.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -438,14 +499,17 @@ private fun SearchCard(
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(hit.title, style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "${hit.kind} | score ${"%.3f".format(hit.score)}",
+                                "${hit.kindLabel()} | score ${"%.3f".format(hit.score)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (hit.labels.isNotEmpty()) {
+                                LabelNameStrip(labelNames = hit.labels)
+                            }
                             Text(hit.preview, style = MaterialTheme.typography.bodyMedium)
                         }
                     }
@@ -455,10 +519,16 @@ private fun SearchCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
+    onLabelDraftChange: (String) -> Unit,
+    onEditLabel: (Long) -> Unit,
+    onClearLabelEditor: () -> Unit,
+    onSaveLabel: () -> Unit,
+    onDeleteLabel: () -> Unit,
     onSummaryModelPathChange: (String) -> Unit,
     onEmbeddingModelPathChange: (String) -> Unit,
     onSummaryStartDateChange: (String) -> Unit,
@@ -480,6 +550,58 @@ private fun SettingsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        item {
+            ElevatedCard {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Labels", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "Keep a small reusable set. Notes can carry multiple labels, and search can filter by them later.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = state.labelDraft,
+                        onValueChange = onLabelDraftChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(if (state.editingLabelId == null) "New label" else "Edit label") },
+                        singleLine = true,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onSaveLabel) {
+                            Text(if (state.editingLabelId == null) "Add label" else "Save label")
+                        }
+                        if (state.editingLabelId != null) {
+                            OutlinedButton(onClick = onClearLabelEditor) {
+                                Text("Cancel")
+                            }
+                            TextButton(onClick = onDeleteLabel) {
+                                Text("Delete")
+                            }
+                        }
+                    }
+                    if (state.labels.isEmpty()) {
+                        Text(
+                            "No labels yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            state.labels.forEach { label ->
+                                FilterChip(
+                                    selected = state.editingLabelId == label.id,
+                                    onClick = { onEditLabel(label.id) },
+                                    label = { Text(label.name) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
         item {
             Text("Local AI settings", style = MaterialTheme.typography.headlineSmall)
         }
@@ -717,7 +839,8 @@ private fun RollupCard(rollup: RollupSnapshot, onOpenNote: (Long?) -> Unit) {
                             Text(theme.summary, style = MaterialTheme.typography.bodyMedium)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 theme.noteIds.forEach { noteId ->
-                                    AssistChip(
+                                    FilterChip(
+                                        selected = false,
                                         onClick = { onOpenNote(noteId) },
                                         label = { Text("Note $noteId") },
                                     )
@@ -728,6 +851,69 @@ private fun RollupCard(rollup: RollupSnapshot, onOpenNote: (Long?) -> Unit) {
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LabelStrip(labels: List<LabelEntity>) {
+    LabelNameStrip(labelNames = labels.map(LabelEntity::name))
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LabelNameStrip(labelNames: List<String>) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        labelNames.forEach { label ->
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Text(
+                    text = label,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RouteStrip(route: List<SearchRouteStep>) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        route.forEach { step ->
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 2.dp,
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        step.granularity.name.lowercase().replaceFirstChar { it.uppercase() },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        step.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun SemanticSearchHit.kindLabel(): String {
+    return when {
+        kind == "note" -> "Note"
+        granularity != null -> granularity.name.lowercase().replaceFirstChar { it.uppercase() }
+        else -> "Rollup"
     }
 }
 

@@ -1,6 +1,7 @@
 package com.voiceledger.lite.semantic
 
 import android.content.Context
+import com.voiceledger.lite.data.LabelEntity
 import com.voiceledger.lite.data.LedgerRepository
 import com.voiceledger.lite.data.LocalAiSettings
 import com.voiceledger.lite.data.NoteEntity
@@ -112,32 +113,136 @@ class LocalAggregationCoordinator(
         return "Local rollups and semantic search index refreshed."
     }
 
-    suspend fun search(query: String): List<SemanticSearchHit> {
+    suspend fun search(query: String, labelIds: Set<Long> = emptySet()): SemanticSearchResponse {
         val normalized = query.trim()
         if (normalized.isBlank()) {
-            return emptyList()
+            return SemanticSearchResponse(route = emptyList(), hits = emptyList())
         }
+
         val settings = settingsStore.load().normalized()
         val queryVector = embeddingEngine.embed(normalized, settings)
-        return repository.allSemanticEntries()
-            .mapNotNull { entry ->
-                val embedding = runCatching {
-                    json.decodeFromString<List<Float>>(entry.embeddingJson).toFloatArray()
-                }.getOrNull() ?: return@mapNotNull null
-                val score = cosineSimilarity(queryVector, embedding)
+        val decodedEntries = repository.allSemanticEntries().mapNotNull(::decodeEntry)
+        if (decodedEntries.isEmpty()) {
+            return SemanticSearchResponse(route = emptyList(), hits = emptyList())
+        }
+
+        val noteLabelScope = if (labelIds.isEmpty()) {
+            null
+        } else {
+            repository.noteIdsWithAnyLabels(labelIds)
+        }
+        if (noteLabelScope != null && noteLabelScope.isEmpty()) {
+            return SemanticSearchResponse(route = emptyList(), hits = emptyList())
+        }
+
+        val noteEntries = decodedEntries.filter { it.entry.kind == "note" && it.entry.noteId != null }
+        val rollupEntriesById = decodedEntries
+            .filter { it.entry.kind == "rollup" }
+            .associateBy { it.entry.rollupId ?: it.entry.sourceId }
+        val rollups = repository.allRollups()
+
+        val topYears = selectStage(
+            rollups = rollups.filter { it.granularity == RollupGranularity.YEARLY },
+            rollupEntriesById = rollupEntriesById,
+            queryVector = queryVector,
+            labelScope = noteLabelScope,
+            limit = 2,
+        )
+        val topMonths = selectStage(
+            rollups = rollups.filter { it.granularity == RollupGranularity.MONTHLY && withinParents(it, topYears) },
+            rollupEntriesById = rollupEntriesById,
+            queryVector = queryVector,
+            labelScope = noteLabelScope,
+            limit = 3,
+        )
+        val topWeeks = selectStage(
+            rollups = rollups.filter { it.granularity == RollupGranularity.WEEKLY && withinParents(it, topMonths) },
+            rollupEntriesById = rollupEntriesById,
+            queryVector = queryVector,
+            labelScope = noteLabelScope,
+            limit = 4,
+        )
+        val topDays = selectStage(
+            rollups = rollups.filter { it.granularity == RollupGranularity.DAILY && withinParents(it, topWeeks) },
+            rollupEntriesById = rollupEntriesById,
+            queryVector = queryVector,
+            labelScope = noteLabelScope,
+            limit = 5,
+        )
+
+        val candidateNoteIds = buildCandidateNoteIds(
+            topDays = topDays,
+            topWeeks = topWeeks,
+            topMonths = topMonths,
+            topYears = topYears,
+            labelScope = noteLabelScope,
+            allNoteIds = noteEntries.mapNotNull { it.entry.noteId }.toSet(),
+        )
+        val noteMap = repository.notesWithLabelsByIds(candidateNoteIds)
+
+        val noteHits = noteEntries
+            .filter { decoded ->
+                val noteId = decoded.entry.noteId ?: return@filter false
+                candidateNoteIds.contains(noteId)
+            }
+            .map { decoded ->
+                val noteId = decoded.entry.noteId ?: error("Note id missing.")
+                val note = noteMap[noteId]
                 SemanticSearchHit(
-                    entryId = entry.entryId,
-                    kind = entry.kind,
-                    title = entry.title,
-                    preview = entry.body,
-                    score = score,
-                    noteId = entry.noteId,
-                    rollupId = entry.rollupId,
-                    granularity = entry.granularity?.let(RollupGranularity::valueOf),
+                    entryId = decoded.entry.entryId,
+                    kind = "note",
+                    title = decoded.entry.title,
+                    preview = note?.note?.body?.take(220) ?: decoded.entry.body,
+                    score = cosineSimilarity(queryVector, decoded.embedding),
+                    noteId = noteId,
+                    rollupId = null,
+                    granularity = null,
+                    labels = note?.labels?.map(LabelEntity::name).orEmpty(),
                 )
             }
             .sortedByDescending(SemanticSearchHit::score)
             .take(settings.searchResultLimit)
+
+        val route = listOfNotNull(
+            topYears.firstOrNull(),
+            topMonths.firstOrNull(),
+            topWeeks.firstOrNull(),
+            topDays.firstOrNull(),
+        ).map { scored ->
+            SearchRouteStep(
+                granularity = scored.rollup.granularity,
+                title = scored.rollup.title,
+                score = scored.score,
+            )
+        }
+
+        if (noteHits.size >= settings.searchResultLimit) {
+            return SemanticSearchResponse(route = route, hits = noteHits)
+        }
+
+        val rollupHits = (topDays + topWeeks + topMonths + topYears)
+            .distinctBy { it.rollup.id }
+            .map { scored ->
+                SemanticSearchHit(
+                    entryId = "rollup:${scored.rollup.id}",
+                    kind = "rollup",
+                    title = scored.rollup.title,
+                    preview = scored.rollup.overview,
+                    score = scored.score,
+                    noteId = scored.rollup.noteIds.firstOrNull(),
+                    rollupId = scored.rollup.id,
+                    granularity = scored.rollup.granularity,
+                )
+            }
+            .filter { hit ->
+                noteHits.none { existing -> existing.entryId == hit.entryId }
+            }
+            .take(settings.searchResultLimit - noteHits.size)
+
+        return SemanticSearchResponse(
+            route = route,
+            hits = noteHits + rollupHits,
+        )
     }
 
     private suspend fun reindexNotes(notes: List<NoteEntity>, settings: LocalAiSettings) {
@@ -184,35 +289,35 @@ class LocalAggregationCoordinator(
         var lastProcessedEnd: Long? = null
         bucketStarts.forEach { bucketStart ->
             val bucketEnd = endOfPeriod(bucketStart, granularity)
-            val docs = sourceDocuments
+            val bucketDocuments = sourceDocuments
                 .filter { document ->
                     val sourceStart = startOfPeriod(document.createdAtEpochMs, granularity)
                     sourceStart == bucketStart
                 }
                 .sortedByDescending(SemanticDocument::createdAtEpochMs)
-                .take(settings.maxSourcesPerRollup)
+            val docsForSummary = bucketDocuments.take(settings.maxSourcesPerRollup)
 
             val rollupId = "${granularity.name.lowercase()}:$bucketStart"
-            if (docs.isEmpty()) {
+            if (docsForSummary.isEmpty()) {
                 repository.deleteRollup(rollupId)
                 return@forEach
             }
 
             val insight = summaryEngine.summarize(
-                documents = docs,
+                documents = docsForSummary,
                 granularity = granularity,
                 periodStartEpochMs = bucketStart,
                 periodEndEpochMs = bucketEnd,
                 settings = settings,
             )
-            val noteIds = docs.flatMap(SemanticDocument::noteIds).distinct()
+            val noteIds = bucketDocuments.flatMap(SemanticDocument::noteIds).distinct()
 
             repository.replaceRollup(
                 id = rollupId,
                 granularity = granularity,
                 periodStartEpochMs = bucketStart,
                 periodEndEpochMs = bucketEnd,
-                sourceCount = docs.size,
+                sourceCount = bucketDocuments.size,
                 insight = insight,
                 noteIds = noteIds,
             )
@@ -242,6 +347,72 @@ class LocalAggregationCoordinator(
             lastProcessedEnd = bucketEnd
         }
         return lastProcessedEnd
+    }
+
+    private fun buildCandidateNoteIds(
+        topDays: List<ScoredRollup>,
+        topWeeks: List<ScoredRollup>,
+        topMonths: List<ScoredRollup>,
+        topYears: List<ScoredRollup>,
+        labelScope: Set<Long>?,
+        allNoteIds: Set<Long>,
+    ): Set<Long> {
+        val timelineIds = when {
+            topDays.isNotEmpty() -> topDays.flatMap { it.rollup.noteIds }
+            topWeeks.isNotEmpty() -> topWeeks.flatMap { it.rollup.noteIds }
+            topMonths.isNotEmpty() -> topMonths.flatMap { it.rollup.noteIds }
+            topYears.isNotEmpty() -> topYears.flatMap { it.rollup.noteIds }
+            else -> emptyList()
+        }.toSet()
+
+        return when {
+            labelScope == null && timelineIds.isNotEmpty() -> timelineIds
+            labelScope == null -> allNoteIds
+            timelineIds.isEmpty() -> labelScope
+            else -> timelineIds.intersect(labelScope).ifEmpty { labelScope }
+        }
+    }
+
+    private fun selectStage(
+        rollups: List<RollupSnapshot>,
+        rollupEntriesById: Map<String, DecodedEntry>,
+        queryVector: FloatArray,
+        labelScope: Set<Long>?,
+        limit: Int,
+    ): List<ScoredRollup> {
+        return rollups.mapNotNull { rollup ->
+            val decoded = rollupEntriesById[rollup.id] ?: return@mapNotNull null
+            val semanticScore = cosineSimilarity(queryVector, decoded.embedding)
+            val labelBoost = if (labelScope.isNullOrEmpty() || rollup.noteIds.isEmpty()) {
+                0f
+            } else {
+                val matchingCount = rollup.noteIds.count(labelScope::contains)
+                0.15f * (matchingCount.toFloat() / rollup.noteIds.size.toFloat())
+            }
+            ScoredRollup(
+                rollup = rollup,
+                score = semanticScore + labelBoost,
+            )
+        }
+            .sortedByDescending(ScoredRollup::score)
+            .take(limit)
+    }
+
+    private fun withinParents(candidate: RollupSnapshot, parents: List<ScoredRollup>): Boolean {
+        if (parents.isEmpty()) {
+            return true
+        }
+        return parents.any { parent ->
+            candidate.periodStartEpochMs >= parent.rollup.periodStartEpochMs &&
+                candidate.periodEndEpochMs <= parent.rollup.periodEndEpochMs
+        }
+    }
+
+    private fun decodeEntry(entry: SemanticEntryEntity): DecodedEntry? {
+        val embedding = runCatching {
+            json.decodeFromString<List<Float>>(entry.embeddingJson).toFloatArray()
+        }.getOrNull() ?: return null
+        return DecodedEntry(entry = entry, embedding = embedding)
     }
 
     private fun startOfPeriod(epochMs: Long, granularity: RollupGranularity): Long {
@@ -283,3 +454,13 @@ class LocalAggregationCoordinator(
         return sum
     }
 }
+
+private data class DecodedEntry(
+    val entry: SemanticEntryEntity,
+    val embedding: FloatArray,
+)
+
+private data class ScoredRollup(
+    val rollup: RollupSnapshot,
+    val score: Float,
+)

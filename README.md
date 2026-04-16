@@ -5,9 +5,11 @@ Voice Ledger Lite is a local-first Android journal for quick note capture, incre
 ## What it does
 
 - saves notes locally with a title, body, created timestamp, and updated timestamp
+- lets you manage reusable labels and attach any number of them to a note
 - keeps everything on-device in a Room database
 - builds daily, weekly, monthly, and yearly rollups from the last dirty checkpoint forward
 - keeps a local semantic index for notes and rollups
+- routes search from years to months to weeks to days before narrowing to raw notes
 - supports importing an on-device summary model and an on-device embedding model into app storage
 - falls back to built-in local heuristics when model files are not present
 
@@ -45,6 +47,7 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 Important settings:
 
+- `Labels`: reusable note tags managed in Settings and used as optional search filters
 - `Summary model path`: optional on-device `.task` bundle for local text generation
 - `Embedding model path`: optional on-device text embedding model for local vector search
 - `Summarize since`: optional `YYYY-MM-DD` floor for rollup backfill
@@ -56,8 +59,10 @@ Important settings:
 2. Install the APK on your phone.
 3. Open Voice Ledger Lite.
 4. Add a few notes in `Compose`.
-5. Open `Insights` and tap `Run now` to build local rollups and the local semantic index.
-6. Optional: open `Settings` and import a summary `.task` model plus an embedding model if you want model-backed on-device generation instead of the built-in fallback.
+5. Optional: open `Settings` and create a few labels such as `Investing`, `Ideas`, or `Work`.
+6. Open `Insights` and tap `Run now` to build local rollups and the local semantic index.
+7. Search from `Insights`, optionally filtering by one or more labels.
+8. Optional: import a summary `.task` model plus an embedding model if you want model-backed on-device generation instead of the built-in fallback.
 
 No PC or server connection is required for the app's note storage, rollups, or semantic search.
 
@@ -82,4 +87,5 @@ This is currently a debug APK for fast testing. A signed release build would nee
 1. Create a few short notes in the `Compose` tab.
 2. Open `Insights` and tap `Run now`.
 3. Review the daily, weekly, monthly, and yearly rollups.
-4. Enter a query in semantic search and confirm local results appear.
+4. Create a few labels and attach them to notes.
+5. Enter a query in semantic search and confirm the route and local results appear.

@@ -25,12 +25,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val database = LedgerDatabaseFactory.open(applicationContext)
-        val repository = LedgerRepository(
-            noteDao = database.noteDao(),
-            rollupDao = database.rollupDao(),
-            semanticEntryDao = database.semanticEntryDao(),
-            checkpointDao = database.aggregationCheckpointDao(),
-        )
+        val repository = LedgerRepository(database)
         val settingsStore = SettingsStore(applicationContext)
         val coordinator = LocalAggregationCoordinator(applicationContext, repository, settingsStore)
         val modelStore = ModelStore(applicationContext)

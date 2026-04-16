@@ -15,12 +15,7 @@ class AggregationWorker(
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val database = LedgerDatabaseFactory.open(applicationContext)
-        val repository = LedgerRepository(
-            noteDao = database.noteDao(),
-            rollupDao = database.rollupDao(),
-            semanticEntryDao = database.semanticEntryDao(),
-            checkpointDao = database.aggregationCheckpointDao(),
-        )
+        val repository = LedgerRepository(database)
         val settingsStore = SettingsStore(applicationContext)
         if (!settingsStore.load().backgroundProcessingEnabled) {
             return@withContext Result.success()

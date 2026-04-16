@@ -1,8 +1,13 @@
 package com.voiceledger.lite.data
 
 import androidx.room.ColumnInfo
+import androidx.room.Embedded
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.Junction
 import androidx.room.PrimaryKey
+import androidx.room.Relation
 import java.time.LocalDate
 
 @Entity(tableName = "notes")
@@ -12,6 +17,60 @@ data class NoteEntity(
     val body: String,
     @ColumnInfo(name = "created_at_epoch_ms") val createdAtEpochMs: Long,
     @ColumnInfo(name = "updated_at_epoch_ms") val updatedAtEpochMs: Long,
+)
+
+@Entity(
+    tableName = "labels",
+    indices = [
+        Index(value = ["normalized_name"], unique = true),
+    ],
+)
+data class LabelEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    @ColumnInfo(name = "normalized_name") val normalizedName: String,
+    @ColumnInfo(name = "created_at_epoch_ms") val createdAtEpochMs: Long,
+)
+
+@Entity(
+    tableName = "note_label_cross_refs",
+    primaryKeys = ["note_id", "label_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = NoteEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["note_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = LabelEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["label_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["note_id"]),
+        Index(value = ["label_id"]),
+    ],
+)
+data class NoteLabelCrossRef(
+    @ColumnInfo(name = "note_id") val noteId: Long,
+    @ColumnInfo(name = "label_id") val labelId: Long,
+)
+
+data class NoteWithLabels(
+    @Embedded val note: NoteEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "id",
+        associateBy = Junction(
+            value = NoteLabelCrossRef::class,
+            parentColumn = "note_id",
+            entityColumn = "label_id",
+        ),
+    )
+    val labels: List<LabelEntity>,
 )
 
 enum class RollupGranularity {

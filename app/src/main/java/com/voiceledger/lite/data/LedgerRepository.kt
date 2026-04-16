@@ -1,12 +1,13 @@
 package com.voiceledger.lite.data
 
+import androidx.room.withTransaction
 import com.voiceledger.lite.semantic.AggregateInsight
 import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.RollupSnapshot
-import com.voiceledger.lite.semantic.SemanticSearchHit
 import com.voiceledger.lite.semantic.ThemeBucket
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Locale
 import kotlin.math.min
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -15,13 +16,18 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class LedgerRepository(
-    private val noteDao: NoteDao,
-    private val rollupDao: RollupDao,
-    private val semanticEntryDao: SemanticEntryDao,
-    private val checkpointDao: AggregationCheckpointDao,
+    private val database: LedgerDatabase,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
-    fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeAll()
+    private val noteDao = database.noteDao()
+    private val labelDao = database.labelDao()
+    private val rollupDao = database.rollupDao()
+    private val semanticEntryDao = database.semanticEntryDao()
+    private val checkpointDao = database.aggregationCheckpointDao()
+
+    fun observeNotes(): Flow<List<NoteWithLabels>> = noteDao.observeAllWithLabels()
+
+    fun observeLabels(): Flow<List<LabelEntity>> = labelDao.observeAll()
 
     fun observeRollups(): Flow<List<RollupSnapshot>> {
         return rollupDao.observeAll().map { entities ->
@@ -39,59 +45,131 @@ class LedgerRepository(
 
     suspend fun getNote(noteId: Long): NoteEntity? = noteDao.getById(noteId)
 
-    suspend fun saveNote(noteId: Long?, title: String, body: String): Long {
+    suspend fun getNoteWithLabels(noteId: Long): NoteWithLabels? = noteDao.getWithLabelsById(noteId)
+
+    suspend fun allLabels(): List<LabelEntity> = labelDao.all()
+
+    suspend fun saveNote(noteId: Long?, title: String, body: String, labelIds: Set<Long>): Long {
         val now = System.currentTimeMillis()
         val cleanedTitle = title.trim()
         val cleanedBody = body.trim()
+        val distinctLabelIds = labelIds.distinct()
         var dirtyEpochMs = now
+        var savedId = noteId ?: 0
 
-        val savedId = if (noteId == null) {
-            noteDao.insert(
-                NoteEntity(
-                    title = cleanedTitle,
-                    body = cleanedBody,
-                    createdAtEpochMs = now,
-                    updatedAtEpochMs = now,
-                ),
-            )
-        } else {
-            val existing = noteDao.getById(noteId)
-            dirtyEpochMs = existing?.createdAtEpochMs ?: now
-            val note = if (existing == null) {
-                NoteEntity(
-                    id = noteId,
-                    title = cleanedTitle,
-                    body = cleanedBody,
-                    createdAtEpochMs = now,
-                    updatedAtEpochMs = now,
+        database.withTransaction {
+            savedId = if (noteId == null) {
+                noteDao.insert(
+                    NoteEntity(
+                        title = cleanedTitle,
+                        body = cleanedBody,
+                        createdAtEpochMs = now,
+                        updatedAtEpochMs = now,
+                    ),
                 )
             } else {
-                existing.copy(
-                    title = cleanedTitle,
-                    body = cleanedBody,
-                    updatedAtEpochMs = now,
+                val existing = noteDao.getById(noteId)
+                dirtyEpochMs = existing?.createdAtEpochMs ?: now
+                val note = if (existing == null) {
+                    NoteEntity(
+                        id = noteId,
+                        title = cleanedTitle,
+                        body = cleanedBody,
+                        createdAtEpochMs = now,
+                        updatedAtEpochMs = now,
+                    )
+                } else {
+                    existing.copy(
+                        title = cleanedTitle,
+                        body = cleanedBody,
+                        updatedAtEpochMs = now,
+                    )
+                }
+                if (existing == null) {
+                    noteDao.insert(note)
+                } else {
+                    noteDao.update(note)
+                    note.id
+                }
+            }
+
+            noteDao.deleteLabelRefsForNote(savedId)
+            if (distinctLabelIds.isNotEmpty()) {
+                noteDao.insertLabelRefs(
+                    distinctLabelIds.map { labelId ->
+                        NoteLabelCrossRef(
+                            noteId = savedId,
+                            labelId = labelId,
+                        )
+                    },
                 )
             }
-            if (existing == null) {
-                noteDao.insert(note)
-            } else {
-                noteDao.update(note)
-                note.id
-            }
+
+            val dirtyFrom = floorToDayStart(dirtyEpochMs)
+            markDirtyFromInternal(dirtyFrom)
         }
 
-        val dirtyFrom = floorToDayStart(dirtyEpochMs)
-        markDirtyFrom(dirtyFrom)
         return savedId
     }
 
     suspend fun deleteNote(noteId: Long) {
         val existing = noteDao.getById(noteId)
-        noteDao.deleteById(noteId)
-        semanticEntryDao.deleteById("note:$noteId")
-        existing?.let { note ->
-            markDirtyFrom(floorToDayStart(note.createdAtEpochMs))
+        database.withTransaction {
+            noteDao.deleteById(noteId)
+            semanticEntryDao.deleteById("note:$noteId")
+            existing?.let { note ->
+                markDirtyFromInternal(floorToDayStart(note.createdAtEpochMs))
+            }
         }
+    }
+
+    suspend fun saveLabel(labelId: Long?, rawName: String): LabelEntity {
+        val cleanedName = normalizeLabelDisplay(rawName)
+        require(cleanedName.isNotBlank()) { "Label name cannot be empty." }
+
+        val normalizedName = normalizeLabelKey(cleanedName)
+        val existing = labelDao.getByNormalizedName(normalizedName)
+        if (existing != null && existing.id != labelId) {
+            error("Label \"$cleanedName\" already exists.")
+        }
+
+        return if (labelId == null) {
+            val savedId = labelDao.insert(
+                LabelEntity(
+                    name = cleanedName,
+                    normalizedName = normalizedName,
+                    createdAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+            labelDao.getById(savedId) ?: error("Label save failed.")
+        } else {
+            val current = labelDao.getById(labelId)
+                ?: error("That label no longer exists.")
+            val updated = current.copy(
+                name = cleanedName,
+                normalizedName = normalizedName,
+            )
+            labelDao.update(updated)
+            updated
+        }
+    }
+
+    suspend fun deleteLabel(labelId: Long) {
+        labelDao.deleteById(labelId)
+    }
+
+    suspend fun noteIdsWithAnyLabels(labelIds: Set<Long>): Set<Long> {
+        if (labelIds.isEmpty()) {
+            return emptySet()
+        }
+        return labelDao.noteIdsWithAnyLabels(labelIds.toList()).toSet()
+    }
+
+    suspend fun notesWithLabelsByIds(noteIds: Collection<Long>): Map<Long, NoteWithLabels> {
+        if (noteIds.isEmpty()) {
+            return emptyMap()
+        }
+        return noteDao.byIdsWithLabels(noteIds.distinct()).associateBy { it.note.id }
     }
 
     suspend fun replaceRollup(
@@ -124,6 +202,10 @@ class LedgerRepository(
     suspend fun deleteRollup(id: String) {
         rollupDao.deleteById(id)
         semanticEntryDao.deleteBySourceId(id)
+    }
+
+    suspend fun allRollups(): List<RollupSnapshot> {
+        return rollupDao.observeAllOnce().map(::toRollupSnapshot)
     }
 
     suspend fun rollupsByGranularity(granularity: RollupGranularity): List<RollupSnapshot> {
@@ -162,6 +244,12 @@ class LedgerRepository(
     }
 
     suspend fun markDirtyFrom(epochMs: Long) {
+        database.withTransaction {
+            markDirtyFromInternal(epochMs)
+        }
+    }
+
+    private suspend fun markDirtyFromInternal(epochMs: Long) {
         RollupGranularity.entries.forEach { granularity ->
             val current = checkpoint(granularity)
             val nextDirtyFrom = current.dirtyFromEpochMs?.let { min(it, epochMs) } ?: epochMs
@@ -172,23 +260,6 @@ class LedgerRepository(
                 ),
             )
         }
-    }
-
-    suspend fun searchHits(limit: Int): List<SemanticSearchHit> {
-        return semanticEntryDao.all()
-            .take(limit)
-            .map { entry ->
-                SemanticSearchHit(
-                    entryId = entry.entryId,
-                    kind = entry.kind,
-                    title = entry.title,
-                    preview = entry.body,
-                    score = 0f,
-                    noteId = entry.noteId,
-                    rollupId = entry.rollupId,
-                    granularity = entry.granularity?.let(RollupGranularity::valueOf),
-                )
-            }
     }
 
     private fun toRollupSnapshot(entity: RollupEntity): RollupSnapshot {
@@ -226,5 +297,13 @@ class LedgerRepository(
             .atStartOfDay(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
+    }
+
+    private fun normalizeLabelDisplay(value: String): String {
+        return value.trim().replace("\\s+".toRegex(), " ")
+    }
+
+    private fun normalizeLabelKey(value: String): String {
+        return normalizeLabelDisplay(value).lowercase(Locale.ROOT)
     }
 }
