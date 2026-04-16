@@ -109,7 +109,8 @@ class LocalSummaryEngine(
                     .sortedByDescending(SemanticDocument::createdAtEpochMs)
                     .take(3)
                     .mapNotNull { document ->
-                        document.body.lineSequence().firstOrNull()?.trim()?.takeIf(String::isNotBlank)?.let { line ->
+                        val excerpt = document.body.replace('\n', ' ').trim().take(120).trimEnd()
+                        excerpt.takeIf(String::isNotBlank)?.let { line ->
                             "${document.title.ifBlank { "Untitled" }}: $line"
                         }
                     }
