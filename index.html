@@ -734,6 +734,18 @@
     const totalSize = document.getElementById("total-size");
     const totalSizeInline = document.getElementById("total-size-inline");
 
+    function setText(node, value) {
+      if (node) {
+        node.textContent = value;
+      }
+    }
+
+    function setHtml(node, value) {
+      if (node) {
+        node.innerHTML = value;
+      }
+    }
+
     function formatBytes(bytes) {
       const gib = 1024 * 1024 * 1024;
       const mib = 1024 * 1024;
@@ -747,10 +759,10 @@
       const totalBytes = apkBytes + summaryModelBytes + embeddingModelBytes;
       const apkLabel = formatBytes(apkBytes);
       const totalLabel = formatBytes(totalBytes);
-      apkSize.textContent = apkLabel;
-      apkSizeInline.textContent = apkLabel;
-      totalSize.textContent = `${totalLabel}+`;
-      totalSizeInline.textContent = `${totalLabel}+`;
+      setText(apkSize, apkLabel);
+      setText(apkSizeInline, apkLabel);
+      setText(totalSize, `${totalLabel}+`);
+      setText(totalSizeInline, `${totalLabel}+`);
     }
 
     updateSizeDisplays(fallbackApkBytes);
@@ -773,15 +785,15 @@
           ? new Date(release.published_at).toLocaleString()
           : "unknown publish time";
 
-        releaseTitle.textContent = release.name || release.tag_name || "Latest release";
-        releaseDetail.innerHTML = apkAsset
+        setText(releaseTitle, release.name || release.tag_name || "Latest release");
+        setHtml(releaseDetail, apkAsset
           ? `Published ${publishedAt}. The current release includes <span class="code">${assetName}</span>.`
-          : `Published ${publishedAt}. The release exists, but <span class="code">${assetName}</span> is not attached yet.`;
+          : `Published ${publishedAt}. The release exists, but <span class="code">${assetName}</span> is not attached yet.`);
       })
       .catch((error) => {
         apkLink.href = fallbackAssetUrl;
-        releaseTitle.textContent = "Latest release lookup unavailable";
-        releaseDetail.textContent = `${error.message}. The download button still points at the expected latest-release APK path.`;
+        setText(releaseTitle, "Latest release lookup unavailable");
+        setText(releaseDetail, `${error.message}. The download button still points at the expected latest-release APK path.`);
         updateSizeDisplays(fallbackApkBytes);
       });
 
