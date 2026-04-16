@@ -70,7 +70,10 @@ object LocalModelLocator {
     private fun modelRoots(context: Context): Sequence<File> {
         return sequence {
             yield(File(context.filesDir, "models"))
-            context.getExternalFilesDir("models")?.let(::yield)
+            val externalModelsDir = context.getExternalFilesDir("models")
+            if (externalModelsDir != null) {
+                yield(externalModelsDir)
+            }
         }
     }
 }
