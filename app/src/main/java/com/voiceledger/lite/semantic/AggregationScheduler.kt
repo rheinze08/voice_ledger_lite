@@ -1,6 +1,7 @@
 package com.voiceledger.lite.semantic
 
 import android.content.Context
+import android.content.ComponentName
 import androidx.work.Constraints
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
@@ -9,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import androidx.work.multiprocess.RemoteListenableWorker
 import com.voiceledger.lite.data.LocalAiSettings
 import com.voiceledger.lite.data.normalizeBackgroundProcessingTime
 import java.time.Duration
@@ -32,7 +34,7 @@ object AggregationScheduler {
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
         val request = OneTimeWorkRequestBuilder<AggregationWorker>()
-            .setInputData(inputData(manualTrigger = false, rebuildFromStartDate = false))
+            .setInputData(remoteInputData(context, manualTrigger = false, rebuildFromStartDate = false))
             .setConstraints(constraints)
             .setInitialDelay(nextScheduledDelay(settings.backgroundProcessingTime))
             .build()
@@ -55,7 +57,7 @@ object AggregationScheduler {
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
         val request = OneTimeWorkRequestBuilder<AggregationWorker>()
-            .setInputData(inputData(manualTrigger = false, rebuildFromStartDate = false))
+            .setInputData(remoteInputData(context, manualTrigger = false, rebuildFromStartDate = false))
             .setConstraints(constraints)
             .setInitialDelay(nextScheduledDelay(settings.backgroundProcessingTime))
             .build()
@@ -68,12 +70,7 @@ object AggregationScheduler {
 
     fun enqueueImmediate(context: Context, rebuildFromStartDate: Boolean) {
         val request = OneTimeWorkRequestBuilder<AggregationWorker>()
-            .setInputData(
-                workDataOf(
-                    KEY_MANUAL_TRIGGER to true,
-                    KEY_REBUILD_FROM_START to rebuildFromStartDate,
-                ),
-            )
+            .setInputData(remoteInputData(context, manualTrigger = true, rebuildFromStartDate = rebuildFromStartDate))
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             IMMEDIATE_WORK_NAME,
@@ -162,6 +159,19 @@ object AggregationScheduler {
     fun isManualTrigger(params: Data): Boolean = params.getBoolean(KEY_MANUAL_TRIGGER, false)
 
     fun isRebuildFromStart(params: Data): Boolean = params.getBoolean(KEY_REBUILD_FROM_START, false)
+
+    private fun remoteInputData(
+        context: Context,
+        manualTrigger: Boolean,
+        rebuildFromStartDate: Boolean,
+    ): Data {
+        val componentName = ComponentName(context, androidx.work.multiprocess.RemoteWorkerService::class.java)
+        return Data.Builder()
+            .putAll(inputData(manualTrigger = manualTrigger, rebuildFromStartDate = rebuildFromStartDate))
+            .putString(RemoteListenableWorker.ARGUMENT_PACKAGE_NAME, componentName.packageName)
+            .putString(RemoteListenableWorker.ARGUMENT_CLASS_NAME, componentName.className)
+            .build()
+    }
 
     private fun mostRelevantImmediateWork(workInfos: List<WorkInfo>): WorkInfo? {
         return workInfos

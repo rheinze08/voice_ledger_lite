@@ -194,10 +194,10 @@ class LocalSummaryEngine(
 
     private fun totalBodyBudget(granularity: RollupGranularity): Int {
         return when (granularity) {
-            RollupGranularity.DAILY -> 18_000
-            RollupGranularity.WEEKLY -> 24_000
-            RollupGranularity.MONTHLY -> 28_000
-            RollupGranularity.YEARLY -> 32_000
+            RollupGranularity.DAILY -> 8_000
+            RollupGranularity.WEEKLY -> 10_000
+            RollupGranularity.MONTHLY -> 12_000
+            RollupGranularity.YEARLY -> 14_000
         }
     }
 
@@ -230,7 +230,7 @@ class LocalSummaryEngine(
     )
 
     companion object {
-        private const val MIN_SOURCE_BODY_CHARS = 1_500
-        private const val MAX_SOURCE_BODY_CHARS = 6_000
+        private const val MIN_SOURCE_BODY_CHARS = 600
+        private const val MAX_SOURCE_BODY_CHARS = 2_500
     }
 }

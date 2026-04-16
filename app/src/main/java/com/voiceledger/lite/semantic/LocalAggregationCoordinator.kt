@@ -106,7 +106,7 @@ class LocalAggregationCoordinator(
                             granularity = granularity,
                             sourceDocuments = dailySources,
                             floorEpochMs = effectiveFloor,
-                            maxSourcesPerRollup = settings.maxSourcesPerRollup,
+                            maxSourcesPerRollup = summarySourceLimit(granularity, settings.maxSourcesPerRollup),
                             summarizer = summarizer,
                             embedder = embedder,
                             runReferenceEpochMs = runReferenceEpochMs,
@@ -566,6 +566,16 @@ class LocalAggregationCoordinator(
 
 private fun RollupGranularity.displayLabel(): String {
     return name.lowercase().replaceFirstChar { it.uppercase() }
+}
+
+private fun summarySourceLimit(granularity: RollupGranularity, configuredMaxSources: Int): Int {
+    val hardCap = when (granularity) {
+        RollupGranularity.DAILY -> 8
+        RollupGranularity.WEEKLY -> 7
+        RollupGranularity.MONTHLY -> 6
+        RollupGranularity.YEARLY -> 6
+    }
+    return configuredMaxSources.coerceAtMost(hardCap)
 }
 
 private data class DecodedEntry(

@@ -7,9 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
+import androidx.work.multiprocess.RemoteCoroutineWorker
 import com.voiceledger.lite.data.LedgerDatabase
 import com.voiceledger.lite.data.LedgerRepository
 import com.voiceledger.lite.data.SettingsStore
@@ -21,8 +21,8 @@ import kotlinx.coroutines.withContext
 class AggregationWorker(
     appContext: Context,
     params: WorkerParameters,
-) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+) : RemoteCoroutineWorker(appContext, params) {
+    override suspend fun doRemoteWork(): Result = withContext(Dispatchers.IO) {
         val database = LedgerDatabaseFactory.open(applicationContext)
         val repository = LedgerRepository(database)
         val settingsStore = SettingsStore(applicationContext)
@@ -41,7 +41,7 @@ class AggregationWorker(
                 "Preparing summary update"
             }
             setProgress(AggregationScheduler.progressData(initialMessage, rebuildFromStartDate))
-            setForeground(createForegroundInfo(initialMessage, rebuildFromStartDate))
+            setForegroundAsync(createForegroundInfo(initialMessage, rebuildFromStartDate)).get()
         }
 
         return@withContext aggregationMutex.withLock {
@@ -50,7 +50,7 @@ class AggregationWorker(
                     .runAggregation(rebuildFromStartDate) { progressMessage ->
                         if (isManualTrigger) {
                             setProgress(AggregationScheduler.progressData(progressMessage, rebuildFromStartDate))
-                            setForeground(createForegroundInfo(progressMessage, rebuildFromStartDate))
+                            setForegroundAsync(createForegroundInfo(progressMessage, rebuildFromStartDate)).get()
                         }
                     }
                 if (isManualTrigger) {
