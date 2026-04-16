@@ -515,7 +515,6 @@
         <div class="download-strip-brand">
           <img src="voice_ledger_lite_logo.png" alt="Voice Ledger Lite logo" />
           <div class="stack">
-            <div class="eyebrow">Voice Ledger Lite</div>
             <h2>Download the Android test build</h2>
           </div>
         </div>
@@ -534,7 +533,6 @@
 
     <section class="hero">
       <div class="hero-copy">
-        <div class="eyebrow">Android Test Build</div>
         <div class="stack">
           <h1>Phone-local notes, summaries, and ask.</h1>
           <p class="lede">
@@ -554,7 +552,6 @@
       </div>
 
       <aside class="hero-aside">
-        <span class="status-pill">Latest Build</span>
         <h2 id="release-title">Checking latest GitHub release</h2>
         <div class="release-grid">
           <div class="metric">
@@ -606,42 +603,7 @@
 
     <section class="panel">
       <div class="section-title">
-        <div class="eyebrow">Install</div>
-        <h2>Basic setup instructions</h2>
-        <p>
-          This is the shortest path for a first test. The current GitHub release is a debug APK, so Android may ask you to allow installs from your browser or file manager.
-        </p>
-      </div>
-      <div class="two-up">
-        <div class="stack">
-          <h3>Install on your phone</h3>
-          <ol class="steps">
-            <li>Tap <strong>Download Latest APK</strong>.</li>
-            <li>Open the downloaded <span class="code">.apk</span> file and allow installation if Android prompts you.</li>
-            <li>Launch Voice Ledger Lite.</li>
-            <li>Keep the app open on Wi-Fi while the setup screen downloads the local models.</li>
-          </ol>
-        </div>
-        <div class="stack">
-          <h3>After the app opens</h3>
-          <ol class="steps">
-            <li>Wait until the setup screen shows the model install as ready.</li>
-            <li>Go to <strong>Compose</strong> and add a few notes with dates and tags.</li>
-            <li>Open <strong>Summarize</strong> and tap <strong>Update</strong> to generate summary documents.</li>
-            <li>Open <strong>Ask</strong> and query your notes after the summary and embedding models are installed.</li>
-          </ol>
-        </div>
-      </div>
-      <div class="callout">
-        <strong>Finish setup before first use.</strong>
-        The app now keeps the model download in a foreground background job, so you can let Android continue it while the screen is off and come back when setup is complete.
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-title">
-        <div class="eyebrow">Screens</div>
-        <h2>What each screen does</h2>
+        <h2>Screens</h2>
         <p>
           The cards below are ready for screenshots. If you want to add your own app captures later, drop files into
           <span class="code">docs/screenshots/</span> using the filenames shown in each placeholder.
@@ -657,7 +619,6 @@
             </div>
           </div>
           <div class="screen-body">
-            <span class="screen-meta">First Launch</span>
             <h3>Setup</h3>
             <p class="fine">
               The app checks and downloads the summary and embedding models automatically. This is where the user should expect the large initial download.
@@ -678,7 +639,6 @@
             </div>
           </div>
           <div class="screen-body">
-            <span class="screen-meta">Tab 1</span>
             <h3>Notes</h3>
             <p class="fine">
               The Notes screen separates the currently active note from older records so you can pull a previous record back into focus quickly.
@@ -699,7 +659,6 @@
             </div>
           </div>
           <div class="screen-body">
-            <span class="screen-meta">Tab 2</span>
             <h3>Compose</h3>
             <p class="fine">
               Capture a note with a title, editable date, body text, and reusable tags. The date defaults to today but can be changed for backfilled notes.
@@ -720,7 +679,6 @@
             </div>
           </div>
           <div class="screen-body">
-            <span class="screen-meta">Tab 3</span>
             <h3>Ask</h3>
             <p class="fine">
               Ask runs retrieval over notes and summary documents, then uses the local model to synthesize an answer from the targeted context.
@@ -741,7 +699,6 @@
             </div>
           </div>
           <div class="screen-body">
-            <span class="screen-meta">Tab 4</span>
             <h3>Summarize</h3>
             <p class="fine">
               Summarize is where the app updates checkpoints, generates daily/weekly/monthly/yearly summary documents, and exposes model installation status.
@@ -754,78 +711,6 @@
           </div>
         </article>
       </div>
-    </section>
-
-    <section class="two-up">
-      <article class="panel">
-        <div class="section-title">
-          <div class="eyebrow">Download</div>
-          <h2>What the first run pulls down</h2>
-        </div>
-        <ul class="checklist">
-          <li><strong>APK:</strong> current debug build, roughly <span id="apk-size-inline">166 MB</span></li>
-          <li><strong>Summary model:</strong> 2.41 GB Gemma 4 E2B LiteRT-LM file</li>
-          <li><strong>Embedding model:</strong> 27.4 MB text embedder file</li>
-          <li><strong>Total expectation:</strong> about <span id="total-size-inline">2.59 GB+</span> with the current build</li>
-        </ul>
-        <div class="callout">
-          These values reflect the app’s current configured artifacts as of April 16, 2026. If the APK grows or the model target changes, the first-run total changes too.
-        </div>
-      </article>
-
-      <article class="panel">
-        <div class="section-title">
-          <div class="eyebrow">Links</div>
-          <h2>Direct project links</h2>
-        </div>
-        <ul class="checklist">
-          <li><a href="https://github.com/rheinze08/voice_ledger_lite/releases/latest">Latest GitHub release</a></li>
-          <li><a href="https://github.com/rheinze08/voice_ledger_lite/actions">GitHub Actions runs</a></li>
-          <li><a href="https://github.com/rheinze08/voice_ledger_lite/actions/workflows/android-apk.yml">APK build workflow</a></li>
-          <li><a href="https://github.com/rheinze08/voice_ledger_lite/archive/refs/heads/main.zip">Source ZIP</a></li>
-        </ul>
-        <hr class="divider" />
-        <p class="fine">
-          If the main download button fails, open the latest release page directly and confirm the asset
-          <span class="code">voice-ledger-lite-debug.apk</span> is attached.
-        </p>
-      </article>
-    </section>
-
-    <section class="footer-grid">
-      <article class="panel">
-        <div class="section-title">
-          <div class="eyebrow">Maintainer Note</div>
-          <h2>How to add screenshots later</h2>
-        </div>
-        <p class="fine">
-          You do not need to edit this page to add screen captures. Just place images in
-          <span class="code">docs/screenshots/</span> with the expected names and the page will load them automatically.
-        </p>
-        <ul class="checklist">
-          <li><span class="code">docs/screenshots/setup.png</span></li>
-          <li><span class="code">docs/screenshots/notes.png</span></li>
-          <li><span class="code">docs/screenshots/compose.png</span></li>
-          <li><span class="code">docs/screenshots/ask.png</span></li>
-          <li><span class="code">docs/screenshots/summarize.png</span></li>
-        </ul>
-        <p class="fine">
-          The loader also accepts <span class="code">.jpg</span> and <span class="code">.jpeg</span> versions of those same filenames.
-        </p>
-      </article>
-
-      <article class="panel">
-        <div class="section-title">
-          <div class="eyebrow">Positioning</div>
-          <h2>What this page is trying to communicate</h2>
-        </div>
-        <ul class="checklist">
-          <li>This is a local-first Android app, not a hosted SaaS</li>
-          <li>The first run is heavy because the app installs local AI models</li>
-          <li>Summarize owns summary document generation and browsing</li>
-          <li>Ask is for question answering over your stored notes and summaries</li>
-        </ul>
-      </article>
     </section>
   </main>
 
