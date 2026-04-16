@@ -10,7 +10,7 @@ Voice Ledger Lite is a local-first Android journal for quick note capture, incre
 - builds daily, weekly, monthly, and yearly rollups from the last dirty checkpoint forward
 - keeps a local semantic index for notes and rollups
 - routes search from years to months to weeks to days before narrowing to raw notes
-- supports importing an on-device summary model and an on-device embedding model into app storage
+- auto-installs the summary and embedding models into app storage from the app release when those assets are published
 - falls back to built-in local heuristics when model files are not present
 
 ## Open Source
@@ -23,7 +23,7 @@ Voice Ledger Lite is a local-first Android journal for quick note capture, incre
 ## Project Layout
 
 - `app/src/main/java/com/voiceledger/lite/data`: Room entities, DAO, repositories, and local settings
-- `app/src/main/java/com/voiceledger/lite/semantic`: local aggregation, embedding, background work, and model import
+- `app/src/main/java/com/voiceledger/lite/semantic`: local aggregation, embedding, background work, and model provisioning
 - `app/src/main/java/com/voiceledger/lite/ui`: Compose app shell and view model
 
 ## Build And Run
@@ -48,8 +48,6 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 Important settings:
 
 - `Labels`: reusable note tags managed in Settings and used as optional search filters
-- `Summary model path`: optional on-device `.task` bundle for local text generation
-- `Embedding model path`: optional on-device text embedding model for local vector search
 - `Summarize since`: optional `YYYY-MM-DD` floor for rollup backfill
 - Background processing runs daily when charging if enabled
 
@@ -62,7 +60,7 @@ Important settings:
 5. Optional: open `Settings` and create a few labels such as `Investing`, `Ideas`, or `Work`.
 6. Open `Insights` and tap `Run now` to build local rollups and the local semantic index.
 7. Search from `Insights`, optionally filtering by one or more labels.
-8. Optional: import a summary `.task` model plus an embedding model if you want model-backed on-device generation instead of the built-in fallback.
+8. Open `Summarize` and confirm the model status shows both local models as installed.
 
 No PC or server connection is required for the app's note storage, rollups, or semantic search.
 
@@ -77,7 +75,7 @@ The repo includes:
 The intended path is:
 
 1. Run the `Build Android APK` workflow from GitHub.
-2. Let it create or update a release with `voice-ledger-lite-debug.apk`.
+2. Let it create or update a release with `voice-ledger-lite-debug.apk` plus the model assets expected by the app.
 3. Open the GitHub Pages download page and install the APK from there.
 
 This is currently a debug APK for fast testing. A signed release build would need a keystore plus GitHub Actions secrets.

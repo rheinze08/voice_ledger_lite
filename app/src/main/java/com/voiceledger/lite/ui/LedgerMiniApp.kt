@@ -1,6 +1,5 @@
 package com.voiceledger.lite.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,18 +21,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -52,7 +54,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,8 +61,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.voiceledger.lite.data.LabelEntity
 import com.voiceledger.lite.data.LocalStats
 import com.voiceledger.lite.data.NoteWithLabels
+import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.GeneratedAnswer
+import com.voiceledger.lite.semantic.LocalModelArtifactStatus
+import com.voiceledger.lite.semantic.LocalModelInstallState
 import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
@@ -69,6 +73,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LedgerMiniApp(
     viewModel: LedgerViewModel,
@@ -89,8 +94,18 @@ fun LedgerMiniApp(
         }
     }
 
+    if (!state.isInitialSetupComplete && !state.isInitialSetupDeferred) {
+        InitialSetupScreen(
+            state = state,
+            onRetry = viewModel::retryModelProvisioning,
+            onContinueWithoutModels = viewModel::continueWithoutModels,
+        )
+        return
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -114,7 +129,7 @@ fun LedgerMiniApp(
                         icon = {
                             Icon(
                                 imageVector = when (tab) {
-                                    AppTab.NOTES -> Icons.Filled.ListAlt
+                                    AppTab.NOTES -> Icons.AutoMirrored.Filled.ListAlt
                                     AppTab.COMPOSE -> Icons.Filled.EditNote
                                     AppTab.INSIGHTS -> Icons.Filled.Insights
                                     AppTab.SUMMARIZE -> Icons.Filled.AutoAwesome
@@ -142,6 +157,7 @@ fun LedgerMiniApp(
                 paddingValues = innerPadding,
                 onTitleChange = viewModel::updateComposeTitle,
                 onBodyChange = viewModel::updateComposeBody,
+                onDateChange = viewModel::updateComposeDate,
                 onToggleLabel = viewModel::toggleComposeLabel,
                 onSave = viewModel::saveDraft,
                 onClear = viewModel::clearComposer,
@@ -165,9 +181,81 @@ fun LedgerMiniApp(
                 onBackgroundProcessingChange = viewModel::updateBackgroundProcessing,
                 onRefresh = { viewModel.refreshInsights(false) },
                 onRebuild = { viewModel.refreshInsights(true) },
+                onRetryModelProvisioning = viewModel::retryModelProvisioning,
                 onSave = viewModel::saveSettings,
-                onOpenNote = viewModel::selectNote,
             )
+        }
+    }
+}
+
+@Composable
+private fun InitialSetupScreen(
+    state: LedgerUiState,
+    onRetry: () -> Unit,
+    onContinueWithoutModels: () -> Unit,
+) {
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text("Setting Up Voice Ledger Lite", style = MaterialTheme.typography.headlineMedium)
+                    Text(
+                        "The app is installing its local AI models. The Gemma 4 summary model is a large first-run download, so this works best on Wi-Fi with several gigabytes of free space.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    state.modelProvisioning.progressFraction?.let { progress ->
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "Overall setup ${formatProgressLine(progress, state.modelProvisioning.downloadedBytes, state.modelProvisioning.totalBytes)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    ModelStatusRow(state.modelProvisioning.summary)
+                    ModelStatusRow(state.modelProvisioning.embedding)
+                    if (state.isProvisioningModels) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Text(
+                                "Downloading and installing models.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = onRetry) {
+                                Text("Retry setup")
+                            }
+                            OutlinedButton(onClick = onContinueWithoutModels) {
+                                Text("Continue in limited mode")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -190,6 +278,11 @@ private fun NotesScreen(
     onDelete: (Long) -> Unit,
 ) {
     val selectedNote = state.notes.firstOrNull { it.note.id == state.selectedNoteId }
+    val recordNotes = if (selectedNote == null) {
+        state.notes
+    } else {
+        state.notes.filterNot { it.note.id == selectedNote.note.id }
+    }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -201,6 +294,9 @@ private fun NotesScreen(
             StatsRow(state.localStats)
         }
         if (selectedNote != null) {
+            item {
+                SectionHeader("Active")
+            }
             item {
                 ElevatedCard(
                     colors = CardDefaults.elevatedCardColors(
@@ -233,7 +329,12 @@ private fun NotesScreen(
                 }
             }
         }
-        items(state.notes, key = { it.note.id }) { note ->
+        if (recordNotes.isNotEmpty()) {
+            item {
+                SectionHeader("Records")
+            }
+        }
+        items(recordNotes, key = { it.note.id }) { note ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -271,6 +372,16 @@ private fun NotesScreen(
     }
 }
 
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.SemiBold,
+    )
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ComposeScreen(
@@ -278,6 +389,7 @@ private fun ComposeScreen(
     paddingValues: PaddingValues,
     onTitleChange: (String) -> Unit,
     onBodyChange: (String) -> Unit,
+    onDateChange: (String) -> Unit,
     onToggleLabel: (Long) -> Unit,
     onSave: () -> Unit,
     onClear: () -> Unit,
@@ -303,6 +415,14 @@ private fun ComposeScreen(
             onValueChange = onTitleChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Title") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = state.composeDate,
+            onValueChange = onDateChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Date") },
+            placeholder = { Text("YYYY-MM-DD") },
             singleLine = true,
         )
         OutlinedTextField(
@@ -517,7 +637,7 @@ private fun SummarizeScreen(
     onBackgroundProcessingChange: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onRebuild: () -> Unit,
-    onOpenNote: (Long?) -> Unit,
+    onRetryModelProvisioning: () -> Unit,
     onSave: () -> Unit,
 ) {
     LazyColumn(
@@ -535,7 +655,7 @@ private fun SummarizeScreen(
                 ) {
                     Text("Create Summary", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        "Create summaries to refresh rollups and checkpoints. Background processing can keep this current automatically.",
+                        "Create summaries to refresh summary documents and checkpoints. Background processing can keep this current automatically.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -548,14 +668,20 @@ private fun SummarizeScreen(
                                 )
                                 Spacer(Modifier.width(10.dp))
                             }
-                            Text(if (state.isRefreshingInsights) "Creating" else "Create summary")
+                            Text("Update")
                         }
                         OutlinedButton(onClick = onRebuild, enabled = !state.isRefreshingInsights) {
-                            Text("Rebuild since start")
+                            Text("Rebuild")
                         }
                     }
                 }
             }
+        }
+        item {
+            ModelProvisioningCard(
+                state = state,
+                onRetry = onRetryModelProvisioning,
+            )
         }
         item {
             StatsRow(state.localStats)
@@ -568,12 +694,24 @@ private fun SummarizeScreen(
                 CheckpointCard(checkpoint)
             }
         }
-        if (state.latestRollups.isNotEmpty()) {
+        if (state.rollups.isNotEmpty()) {
             item {
-                Text("Latest rollups", style = MaterialTheme.typography.titleLarge)
+                Text("Summaries", style = MaterialTheme.typography.titleLarge)
             }
-            items(state.latestRollups, key = RollupSnapshot::id) { rollup ->
-                RollupCard(rollup, onOpenNote)
+            RollupGranularity.entries.forEach { granularity ->
+                val summaries = state.rollups.filter { it.granularity == granularity }
+                if (summaries.isNotEmpty()) {
+                    item {
+                        Text(
+                            "${granularity.displayLabel()} summaries",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    items(summaries, key = RollupSnapshot::id) { rollup ->
+                        RollupCard(rollup)
+                    }
+                }
             }
         }
         item {
@@ -645,10 +783,10 @@ private fun SummarizeScreen(
         }
         item {
             Text(
-                "Background processing keeps summaries and semantic search refreshed when the device is charging.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                        "Background processing keeps summaries and semantic search refreshed when the device is charging.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
         }
         item {
             Row(
@@ -673,6 +811,107 @@ private fun SummarizeScreen(
         item {
             Button(onClick = onSave) {
                 Text("Save changes")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelProvisioningCard(
+    state: LedgerUiState,
+    onRetry: () -> Unit,
+) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Models", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "The app installs the local summary and embedding models automatically. The Gemma 4 summary model is a multi-gigabyte first-run download, so this works best on Wi-Fi with plenty of free storage. Summary generation needs the summary model. Ask also needs the embedding model.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            state.modelProvisioning.progressFraction?.let { progress ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Overall install ${formatProgressLine(progress, state.modelProvisioning.downloadedBytes, state.modelProvisioning.totalBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            ModelStatusRow(state.modelProvisioning.summary)
+            ModelStatusRow(state.modelProvisioning.embedding)
+            if (state.isProvisioningModels) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        "Installing models in app storage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else if (!state.modelProvisioning.allReady) {
+                OutlinedButton(onClick = onRetry) {
+                    Text("Retry model install")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelStatusRow(status: LocalModelArtifactStatus) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(status.displayName, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Status: ${status.state.displayLabel()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = status.state.color(),
+            )
+            Text(
+                status.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            status.progressFraction?.let { progress ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        formatProgressLine(progress, status.downloadedBytes, status.totalBytes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            status.modelLabel?.takeIf(String::isNotBlank)?.let { modelLabel ->
+                Text(
+                    "Model: $modelLabel",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -744,63 +983,51 @@ private fun CheckpointCard(checkpoint: AggregationCheckpoint) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RollupCard(rollup: RollupSnapshot, onOpenNote: (Long?) -> Unit) {
+private fun RollupCard(rollup: RollupSnapshot) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                "${rollup.granularity.name.lowercase().replaceFirstChar { it.uppercase() }} | ${formatTimestamp(rollup.periodStartEpochMs)}",
+                "${rollup.granularity.displayLabel()} | ${formatTimestamp(rollup.periodStartEpochMs)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(rollup.title, style = MaterialTheme.typography.titleLarge)
             Text(rollup.overview, style = MaterialTheme.typography.bodyLarge)
-            Text("Highlights", style = MaterialTheme.typography.titleMedium)
-            rollup.highlights.forEach { highlight ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 7.dp)
-                            .size(6.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(MaterialTheme.colorScheme.secondary),
-                    )
-                    Text(highlight, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-            Text("Themes", style = MaterialTheme.typography.titleMedium)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                rollup.themes.forEach { theme ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(18.dp),
-                        tonalElevation = 2.dp,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(theme.label, style = MaterialTheme.typography.titleSmall)
-                            Text(theme.summary, style = MaterialTheme.typography.bodyMedium)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                theme.noteIds.forEach { noteId ->
-                                    FilterChip(
-                                        selected = false,
-                                        onClick = { onOpenNote(noteId) },
-                                        label = { Text("Note $noteId") },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Text(
+                "Generated from ${rollup.sourceCount} source item(s) with ${rollup.modelLabel}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
+}
+
+private fun RollupGranularity.displayLabel(): String {
+    return name.lowercase().replaceFirstChar { it.uppercase() }
+}
+
+private fun LocalModelInstallState.displayLabel(): String {
+    return when (this) {
+        LocalModelInstallState.CHECKING -> "Checking"
+        LocalModelInstallState.DOWNLOADING -> "Downloading"
+        LocalModelInstallState.READY -> "Ready"
+        LocalModelInstallState.FAILED -> "Failed"
+        LocalModelInstallState.MISSING -> "Missing"
+    }
+}
+
+@Composable
+private fun LocalModelInstallState.color() = when (this) {
+    LocalModelInstallState.READY -> MaterialTheme.colorScheme.primary
+    LocalModelInstallState.FAILED -> MaterialTheme.colorScheme.error
+    LocalModelInstallState.CHECKING,
+    LocalModelInstallState.DOWNLOADING,
+    LocalModelInstallState.MISSING,
+    -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -869,4 +1096,26 @@ private fun SemanticSearchHit.kindLabel(): String {
 private fun formatTimestamp(epochMs: Long): String {
     val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a").withZone(ZoneId.systemDefault())
     return formatter.format(Instant.ofEpochMilli(epochMs))
+}
+
+private fun formatProgressPercent(progress: Float): String {
+    return "${(progress * 100f).toInt()}%"
+}
+
+private fun formatProgressLine(progress: Float, downloadedBytes: Long?, totalBytes: Long?): String {
+    val percent = formatProgressPercent(progress)
+    if (downloadedBytes == null || totalBytes == null || totalBytes <= 0L) {
+        return percent
+    }
+    return "$percent - ${formatByteCount(downloadedBytes)} / ${formatByteCount(totalBytes)}"
+}
+
+private fun formatByteCount(bytes: Long): String {
+    val gib = 1024.0 * 1024.0 * 1024.0
+    val mib = 1024.0 * 1024.0
+    return when {
+        bytes >= gib -> String.format("%.2f GB", bytes / gib)
+        bytes >= mib -> String.format("%.1f MB", bytes / mib)
+        else -> "$bytes B"
+    }
 }

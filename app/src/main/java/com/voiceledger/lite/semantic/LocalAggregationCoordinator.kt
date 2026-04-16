@@ -25,12 +25,14 @@ class LocalAggregationCoordinator(
     private val settingsStore: SettingsStore,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
+    private val modelProvisioner = LocalModelProvisioner(context, settingsStore)
     private val summaryEngine = LocalSummaryEngine(context)
     private val embeddingEngine = LocalEmbeddingEngine(context)
     private val answerEngine = LocalAnswerEngine(context)
     private val zoneId = ZoneId.systemDefault()
 
     suspend fun runAggregation(rebuildFromStartDate: Boolean = false): String {
+        val modelStatus = modelProvisioner.ensureInstalled()
         val settings = settingsStore.load().normalized()
         val notes = repository.allNotesAscending()
         reindexNotes(notes, settings)
@@ -102,17 +104,26 @@ class LocalAggregationCoordinator(
                 SemanticDocument(
                     sourceId = rollup.id,
                     title = rollup.title,
-                    body = buildString {
-                        appendLine(rollup.overview)
-                        rollup.highlights.forEach { appendLine(it) }
-                    }.trim(),
+                    body = rollup.overview,
                     noteIds = rollup.noteIds,
                     createdAtEpochMs = rollup.periodStartEpochMs,
                 )
             }
         }
 
-        return "Summaries and semantic search index refreshed."
+        val notices = buildList {
+            if (!modelStatus.summary.isReady) {
+                add("Summary model is not installed yet, so summaries used the built-in fallback.")
+            }
+            if (!modelStatus.embedding.isReady) {
+                add("Embedding model is not installed yet, so search index entries used hashed fallback vectors.")
+            }
+        }
+        return if (notices.isEmpty()) {
+            "Summaries and semantic search index refreshed."
+        } else {
+            "Summaries and semantic search index refreshed. ${notices.joinToString(" ")}"
+        }
     }
 
     suspend fun search(query: String, labelIds: Set<Long> = emptySet()): SemanticSearchResponse {
@@ -121,6 +132,7 @@ class LocalAggregationCoordinator(
             return SemanticSearchResponse(route = emptyList(), hits = emptyList())
         }
 
+        val modelStatus = modelProvisioner.ensureInstalled()
         val settings = settingsStore.load().normalized()
         val queryVector = embeddingEngine.embed(normalized, settings)
         val decodedEntries = repository.allSemanticEntries().mapNotNull(::decodeEntry)
@@ -252,16 +264,24 @@ class LocalAggregationCoordinator(
         val answer = runCatching {
             answerEngine.answer(normalized, answerDocuments, settings)
         }.getOrNull()
+        val notices = buildList {
+            if (!modelStatus.embedding.isReady) {
+                add("Embedding model is not installed yet. Ask is using hashed fallback vectors for retrieval.")
+            }
+            if (hits.isNotEmpty() && answer == null) {
+                if (!modelStatus.summary.isReady) {
+                    add("Summary model is not installed yet. Ask is showing retrieved notes and summaries only.")
+                } else {
+                    add("The local answer model did not return an answer for these results.")
+                }
+            }
+        }
 
         return SemanticSearchResponse(
             route = route,
             hits = hits,
             answer = answer,
-            answerNotice = if (hits.isNotEmpty() && answer == null) {
-                "No local answer model was found. Ask is showing retrieved notes and summaries only."
-            } else {
-                null
-            },
+            answerNotice = notices.takeIf(List<String>::isNotEmpty)?.joinToString(" "),
         )
     }
 
@@ -343,11 +363,7 @@ class LocalAggregationCoordinator(
             )
 
             val rollupEmbedding = embeddingEngine.embed(
-                buildString {
-                    appendLine(insight.title)
-                    appendLine(insight.overview)
-                    insight.highlights.forEach { appendLine(it) }
-                },
+                "${insight.title}\n${insight.overview}",
                 settings,
             )
             repository.replaceSemanticEntry(
@@ -416,10 +432,7 @@ class LocalAggregationCoordinator(
                         SemanticDocument(
                             sourceId = rollup.id,
                             title = rollup.title,
-                            body = buildString {
-                                appendLine(rollup.overview)
-                                rollup.highlights.forEach { appendLine(it) }
-                            }.trim(),
+                            body = rollup.overview,
                             noteIds = rollup.noteIds,
                             createdAtEpochMs = rollup.periodStartEpochMs,
                         )

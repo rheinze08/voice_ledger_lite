@@ -49,12 +49,18 @@ class LedgerRepository(
 
     suspend fun allLabels(): List<LabelEntity> = labelDao.all()
 
-    suspend fun saveNote(noteId: Long?, title: String, body: String, labelIds: Set<Long>): Long {
+    suspend fun saveNote(
+        noteId: Long?,
+        title: String,
+        body: String,
+        labelIds: Set<Long>,
+        createdAtEpochMs: Long,
+    ): Long {
         val now = System.currentTimeMillis()
         val cleanedTitle = title.trim()
         val cleanedBody = body.trim()
         val distinctLabelIds = labelIds.distinct()
-        var dirtyEpochMs = now
+        var dirtyEpochMs = createdAtEpochMs
         var savedId = noteId ?: 0
 
         database.withTransaction {
@@ -63,25 +69,26 @@ class LedgerRepository(
                     NoteEntity(
                         title = cleanedTitle,
                         body = cleanedBody,
-                        createdAtEpochMs = now,
+                        createdAtEpochMs = createdAtEpochMs,
                         updatedAtEpochMs = now,
                     ),
                 )
             } else {
                 val existing = noteDao.getById(noteId)
-                dirtyEpochMs = existing?.createdAtEpochMs ?: now
+                dirtyEpochMs = existing?.createdAtEpochMs?.let { min(it, createdAtEpochMs) } ?: createdAtEpochMs
                 val note = if (existing == null) {
                     NoteEntity(
                         id = noteId,
                         title = cleanedTitle,
                         body = cleanedBody,
-                        createdAtEpochMs = now,
+                        createdAtEpochMs = createdAtEpochMs,
                         updatedAtEpochMs = now,
                     )
                 } else {
                     existing.copy(
                         title = cleanedTitle,
                         body = cleanedBody,
+                        createdAtEpochMs = createdAtEpochMs,
                         updatedAtEpochMs = now,
                     )
                 }

@@ -3,82 +3,139 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Voice Ledger Lite Download</title>
+  <title>Voice Ledger Lite</title>
+  <meta
+    name="description"
+    content="Download Voice Ledger Lite, install the Android test build, and understand the first-run model download, Notes, Compose, Ask, and Summarize flows."
+  />
   <style>
     :root {
-      --bg: #f1ebdf;
-      --panel: rgba(255, 250, 241, 0.88);
-      --ink: #12231f;
-      --muted: #536461;
-      --accent: #1d6158;
-      --accent-2: #c96a33;
-      --line: rgba(18, 35, 31, 0.12);
-      --shadow: 0 22px 64px rgba(18, 35, 31, 0.16);
+      --bg: #f3ecdf;
+      --panel: rgba(255, 251, 244, 0.86);
+      --panel-strong: rgba(255, 251, 244, 0.94);
+      --ink: #13231f;
+      --muted: #5e6c69;
+      --accent: #1e5e54;
+      --accent-strong: #164b43;
+      --accent-soft: rgba(30, 94, 84, 0.12);
+      --highlight: #c66a38;
+      --highlight-soft: rgba(198, 106, 56, 0.12);
+      --line: rgba(19, 35, 31, 0.11);
+      --shadow: 0 28px 72px rgba(19, 35, 31, 0.14);
+      --radius-xl: 30px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
     }
 
     * {
       box-sizing: border-box;
     }
 
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: "Segoe UI", "Aptos", sans-serif;
       color: var(--ink);
+      font-family: "Aptos", "Segoe UI Variable Display", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(201, 106, 51, 0.16), transparent 30%),
-        radial-gradient(circle at bottom right, rgba(29, 97, 88, 0.16), transparent 35%),
-        linear-gradient(180deg, #f8f2e7 0%, var(--bg) 100%);
+        radial-gradient(circle at 0% 0%, rgba(198, 106, 56, 0.18), transparent 28%),
+        radial-gradient(circle at 100% 100%, rgba(30, 94, 84, 0.18), transparent 32%),
+        linear-gradient(180deg, #faf4ea 0%, var(--bg) 100%);
+    }
+
+    a {
+      color: inherit;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
     }
 
     .shell {
-      width: min(980px, calc(100% - 32px));
-      margin: 40px auto;
+      width: min(1160px, calc(100% - 32px));
+      margin: 28px auto 52px;
       display: grid;
-      gap: 20px;
+      gap: 22px;
     }
 
     .hero,
-    .panel {
+    .panel,
+    .metric,
+    .screen-card {
       border: 1px solid var(--line);
-      border-radius: 28px;
       background: var(--panel);
-      backdrop-filter: blur(18px);
+      backdrop-filter: blur(20px);
       box-shadow: var(--shadow);
     }
 
     .hero {
-      padding: 32px;
+      border-radius: var(--radius-xl);
+      padding: 30px;
       display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr);
       gap: 22px;
+      align-items: stretch;
+    }
+
+    .hero-copy,
+    .hero-aside {
+      display: grid;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand img {
+      width: 68px;
+      height: 68px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.82);
+      padding: 10px;
     }
 
     .eyebrow {
       display: inline-flex;
       width: fit-content;
+      align-items: center;
+      gap: 8px;
       padding: 8px 12px;
       border-radius: 999px;
-      background: rgba(29, 97, 88, 0.1);
+      background: var(--accent-soft);
       color: var(--accent);
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
-    h1 {
+    h1,
+    h2,
+    h3,
+    h4,
+    p {
       margin: 0;
-      font-size: clamp(2.5rem, 7vw, 4.7rem);
-      line-height: 0.96;
-      letter-spacing: -0.04em;
-      max-width: 10ch;
+    }
+
+    h1 {
+      max-width: 12ch;
+      font-size: clamp(2.8rem, 7vw, 5rem);
+      line-height: 0.93;
+      letter-spacing: -0.045em;
     }
 
     .lede {
-      margin: 0;
-      max-width: 58ch;
-      font-size: 1.05rem;
-      line-height: 1.6;
+      max-width: 60ch;
+      font-size: 1.06rem;
+      line-height: 1.65;
       color: var(--muted);
     }
 
@@ -93,12 +150,12 @@
       align-items: center;
       justify-content: center;
       min-height: 52px;
-      padding: 0 20px;
+      padding: 0 18px;
       border-radius: 16px;
+      border: 1px solid transparent;
       text-decoration: none;
       font-weight: 700;
-      border: 1px solid transparent;
-      transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+      transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
     }
 
     .button:hover {
@@ -107,84 +164,246 @@
 
     .button-primary {
       background: var(--accent);
-      color: #f8faf8;
-      box-shadow: 0 14px 28px rgba(29, 97, 88, 0.22);
+      color: #f8fbfa;
+      box-shadow: 0 16px 30px rgba(30, 94, 84, 0.22);
     }
 
     .button-secondary {
-      background: rgba(255, 255, 255, 0.55);
+      background: rgba(255, 255, 255, 0.56);
       color: var(--ink);
       border-color: var(--line);
     }
 
-    .grid {
+    .hero-aside {
+      padding: 22px;
+      border-radius: 24px;
+      background:
+        linear-gradient(180deg, rgba(30, 94, 84, 0.08), rgba(255, 255, 255, 0.45)),
+        var(--panel-strong);
+      border: 1px solid var(--line);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      width: fit-content;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: var(--highlight-soft);
+      color: var(--highlight);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .release-grid,
+    .metrics,
+    .two-up,
+    .screen-grid,
+    .footer-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 20px;
+      gap: 16px;
+    }
+
+    .release-grid,
+    .metrics {
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    }
+
+    .metric {
+      padding: 18px;
+      border-radius: var(--radius-lg);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: clamp(1.25rem, 3.2vw, 1.85rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+
+    .metric-note {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+
+    .section-title {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 2px;
+    }
+
+    .section-title p {
+      max-width: 72ch;
+      color: var(--muted);
+      line-height: 1.65;
     }
 
     .panel {
-      padding: 22px;
+      border-radius: var(--radius-xl);
+      padding: 24px;
+      display: grid;
+      gap: 16px;
     }
 
-    .panel h2,
-    .panel h3 {
-      margin-top: 0;
+    .two-up {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .meta-list,
-    .steps {
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .checklist,
+    .steps,
+    .mini-list {
       margin: 0;
       padding-left: 18px;
       color: var(--muted);
       line-height: 1.7;
     }
 
-    .status {
-      display: grid;
-      gap: 8px;
-      padding: 16px;
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.5);
+    .callout {
+      padding: 16px 18px;
+      border-radius: var(--radius-md);
       border: 1px solid var(--line);
-    }
-
-    .status strong {
-      font-size: 1rem;
-    }
-
-    .status span {
+      background: rgba(255, 255, 255, 0.52);
       color: var(--muted);
-      line-height: 1.5;
+      line-height: 1.6;
+    }
+
+    .callout strong {
+      color: var(--ink);
     }
 
     .code {
       display: inline-flex;
       padding: 4px 8px;
       border-radius: 10px;
-      background: rgba(18, 35, 31, 0.06);
+      background: rgba(19, 35, 31, 0.06);
       font-family: Consolas, "SFMono-Regular", monospace;
       font-size: 0.9rem;
+      color: var(--ink);
+    }
+
+    .screen-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .screen-card {
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+    }
+
+    .shot {
+      position: relative;
+      min-height: 320px;
+      background:
+        radial-gradient(circle at top right, rgba(198, 106, 56, 0.16), transparent 28%),
+        linear-gradient(180deg, rgba(30, 94, 84, 0.1), rgba(255, 255, 255, 0.12)),
+        #ebe3d6;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+
+    .shot img {
+      width: auto;
+      max-width: 100%;
+      max-height: 560px;
+      border-radius: 20px;
+      box-shadow: 0 20px 42px rgba(19, 35, 31, 0.18);
+      border: 1px solid rgba(19, 35, 31, 0.08);
+    }
+
+    .shot-placeholder {
+      width: min(100%, 330px);
+      padding: 22px;
+      border: 1px dashed rgba(19, 35, 31, 0.22);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.56);
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .screen-body {
+      padding: 20px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .screen-meta {
+      display: inline-flex;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .footer-grid {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
     }
 
     .fine {
-      margin: 0;
       color: var(--muted);
-      font-size: 0.92rem;
-      line-height: 1.6;
+      line-height: 1.65;
+      font-size: 0.95rem;
     }
 
-    @media (max-width: 720px) {
-      .hero {
-        padding: 24px;
-      }
+    .divider {
+      height: 1px;
+      background: var(--line);
+      border: 0;
+      margin: 0;
+    }
 
-      .panel {
-        padding: 18px;
+    @media (max-width: 980px) {
+      .hero,
+      .two-up,
+      .screen-grid,
+      .footer-grid {
+        grid-template-columns: 1fr;
       }
 
       h1 {
         max-width: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100% - 22px, 100%);
+        margin-top: 18px;
+      }
+
+      .hero,
+      .panel,
+      .metric {
+        border-radius: 24px;
+      }
+
+      .hero,
+      .panel {
+        padding: 20px;
+      }
+
+      .shot {
+        min-height: 250px;
       }
     }
   </style>
@@ -192,78 +411,345 @@
 <body>
   <main class="shell">
     <section class="hero">
-      <span class="eyebrow">Voice Ledger Lite</span>
-      <h1>Download the Android test build.</h1>
-      <p class="lede">
-        This Android build stores notes locally, builds daily to yearly rollups on-device,
-        and keeps a phone-local semantic index for search without requiring a PC server.
-      </p>
-      <div class="actions">
-        <a class="button button-primary" id="apk-link" href="https://github.com/rheinze08/voice_ledger_lite/releases/latest/download/voice-ledger-lite-debug.apk">Download APK</a>
-        <a class="button button-secondary" href="https://github.com/rheinze08/voice_ledger_lite/archive/refs/heads/main.zip">Download Source ZIP</a>
-        <a class="button button-secondary" href="https://github.com/rheinze08/voice_ledger_lite/actions/workflows/android-apk.yml">Build New APK</a>
+      <div class="hero-copy">
+        <div class="brand">
+          <img src="voice_ledger_lite_logo.png" alt="Voice Ledger Lite logo" />
+          <div class="eyebrow">Android Test Build</div>
+        </div>
+        <div class="stack">
+          <h1>Phone-local notes, summaries, and ask.</h1>
+          <p class="lede">
+            Voice Ledger Lite is an Android app for capturing notes locally, generating daily to yearly summary documents on-device,
+            and querying your own data without standing up a separate server.
+          </p>
+        </div>
+        <div class="actions">
+          <a class="button button-primary" id="apk-link" href="https://github.com/rheinze08/voice_ledger_lite/releases/latest/download/voice-ledger-lite-debug.apk">Download Latest APK</a>
+          <a class="button button-secondary" href="https://github.com/rheinze08/voice_ledger_lite/releases/latest">Latest Release</a>
+          <a class="button button-secondary" href="https://github.com/rheinze08/voice_ledger_lite">Repository</a>
+        </div>
+        <div class="callout">
+          <strong>What to expect on first launch:</strong>
+          the app opens to a setup screen and downloads its local AI models into app-private storage.
+          Leave it open on Wi-Fi. The summary model is large and dominates the first-run download.
+        </div>
       </div>
-      <div class="status" id="release-status">
-        <strong>Checking latest release...</strong>
-        <span>The page looks for the newest GitHub release asset named <span class="code">voice-ledger-lite-debug.apk</span>.</span>
+
+      <aside class="hero-aside">
+        <span class="status-pill">Latest Build</span>
+        <h2 id="release-title">Checking latest GitHub release</h2>
+        <p class="fine" id="release-detail">
+          Looking up the newest release asset named <span class="code">voice-ledger-lite-debug.apk</span>.
+        </p>
+        <div class="release-grid">
+          <div class="metric">
+            <div class="metric-label">APK download</div>
+            <div class="metric-value" id="apk-size">166 MB</div>
+            <div class="metric-note">Current debug build size. This is fetched from the release when available.</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Summary model</div>
+            <div class="metric-value">2.41 GB</div>
+            <div class="metric-note">Configured Gemma 4 E2B LiteRT-LM download.</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Embedding model</div>
+            <div class="metric-value">27.4 MB</div>
+            <div class="metric-note">Configured text embedder download used for retrieval.</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Plan for</div>
+            <div class="metric-value" id="total-size">2.59 GB+</div>
+            <div class="metric-note">Approximate total initial download with the current debug APK plus both model files.</div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="metrics">
+      <article class="metric">
+        <div class="metric-label">Works best with</div>
+        <div class="metric-value">Wi-Fi</div>
+        <div class="metric-note">The summary model is multi-gigabyte. Use a stable connection and keep the app open.</div>
+      </article>
+      <article class="metric">
+        <div class="metric-label">Recommended free space</div>
+        <div class="metric-value">4 GB+</div>
+        <div class="metric-note">Download size is smaller than this, but the device still needs room for extraction and app data.</div>
+      </article>
+      <article class="metric">
+        <div class="metric-label">Minimum Android</div>
+        <div class="metric-value">8.0</div>
+        <div class="metric-note">The current app build targets API 35 and requires at least Android 8.0.</div>
+      </article>
+      <article class="metric">
+        <div class="metric-label">No account required</div>
+        <div class="metric-value">Local-first</div>
+        <div class="metric-note">Notes stay on-device. The app does not require a PC-side server to run.</div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <div class="eyebrow">Install</div>
+        <h2>Basic setup instructions</h2>
+        <p>
+          This is the shortest path for a first test. The current GitHub release is a debug APK, so Android may ask you to allow installs from your browser or file manager.
+        </p>
+      </div>
+      <div class="two-up">
+        <div class="stack">
+          <h3>Install on your phone</h3>
+          <ol class="steps">
+            <li>Tap <strong>Download Latest APK</strong>.</li>
+            <li>Open the downloaded <span class="code">.apk</span> file and allow installation if Android prompts you.</li>
+            <li>Launch Voice Ledger Lite.</li>
+            <li>Keep the app open on Wi-Fi while the setup screen downloads the local models.</li>
+          </ol>
+        </div>
+        <div class="stack">
+          <h3>After the app opens</h3>
+          <ol class="steps">
+            <li>Wait until the setup screen shows the model install as ready.</li>
+            <li>Go to <strong>Compose</strong> and add a few notes with dates and tags.</li>
+            <li>Open <strong>Summarize</strong> and tap <strong>Update</strong> to generate summary documents.</li>
+            <li>Open <strong>Ask</strong> and query your notes after the summary and embedding models are installed.</li>
+          </ol>
+        </div>
+      </div>
+      <div class="callout">
+        <strong>Limited mode exists, but it is not the main path.</strong>
+        If you continue without models, summaries fall back and Ask will be constrained. For a real proof of concept, finish the first-run model download.
       </div>
     </section>
 
-    <section class="grid">
-      <article class="panel">
-        <h2>What You Get</h2>
-        <ul class="meta-list">
-          <li>Local Room database for note storage</li>
-          <li>Title, body, created timestamp, and updated timestamp on every note</li>
-          <li>Incremental daily, weekly, monthly, and yearly rollups</li>
-          <li>Local semantic search over notes and rollups</li>
-          <li>Optional on-device model imports for summary and embeddings</li>
-        </ul>
-      </article>
+    <section class="panel">
+      <div class="section-title">
+        <div class="eyebrow">Screens</div>
+        <h2>What each screen does</h2>
+        <p>
+          The cards below are ready for screenshots. If you want to add your own app captures later, drop files into
+          <span class="code">docs/screenshots/</span> using the filenames shown in each placeholder.
+        </p>
+      </div>
 
-      <article class="panel">
-        <h2>Install Notes</h2>
-        <ul class="meta-list">
-          <li>This download is an Android <span class="code">.apk</span>, not a Windows <span class="code">.exe</span>.</li>
-          <li>It is currently a debug build for quick testing, not a Play Store signed release.</li>
-          <li>On Android, you may need to allow installs from your browser or file manager.</li>
-          <li>The app can run fully locally on the phone. Imported model files are optional.</li>
-        </ul>
-      </article>
+      <div class="screen-grid">
+        <article class="screen-card">
+          <div class="shot" data-files="screenshots/setup.png,screenshots/setup.jpg,screenshots/setup.jpeg">
+            <div class="shot-placeholder">
+              Add a setup screenshot at<br />
+              <span class="code">docs/screenshots/setup.png</span>
+            </div>
+          </div>
+          <div class="screen-body">
+            <span class="screen-meta">First Launch</span>
+            <h3>Setup</h3>
+            <p class="fine">
+              The app checks and downloads the summary and embedding models automatically. This is where the user should expect the large initial download.
+            </p>
+            <ul class="mini-list">
+              <li>Shows per-model install state</li>
+              <li>Shows download progress and byte counts</li>
+              <li>Allows retry if the network drops</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="screen-card">
+          <div class="shot" data-files="screenshots/notes.png,screenshots/notes.jpg,screenshots/notes.jpeg">
+            <div class="shot-placeholder">
+              Add a Notes screenshot at<br />
+              <span class="code">docs/screenshots/notes.png</span>
+            </div>
+          </div>
+          <div class="screen-body">
+            <span class="screen-meta">Tab 1</span>
+            <h3>Notes</h3>
+            <p class="fine">
+              The Notes screen separates the currently active note from older records so you can pull a previous record back into focus quickly.
+            </p>
+            <ul class="mini-list">
+              <li><strong>Active</strong> section for the selected note</li>
+              <li><strong>Records</strong> list for prior notes</li>
+              <li>Fast jump from historical records back into the active view</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="screen-card">
+          <div class="shot" data-files="screenshots/compose.png,screenshots/compose.jpg,screenshots/compose.jpeg">
+            <div class="shot-placeholder">
+              Add a Compose screenshot at<br />
+              <span class="code">docs/screenshots/compose.png</span>
+            </div>
+          </div>
+          <div class="screen-body">
+            <span class="screen-meta">Tab 2</span>
+            <h3>Compose</h3>
+            <p class="fine">
+              Capture a note with a title, editable date, body text, and reusable tags. The date defaults to today but can be changed for backfilled notes.
+            </p>
+            <ul class="mini-list">
+              <li>Manual date field in <span class="code">YYYY-MM-DD</span></li>
+              <li>Up to five reusable tags</li>
+              <li>One note can carry multiple tags</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="screen-card">
+          <div class="shot" data-files="screenshots/ask.png,screenshots/ask.jpg,screenshots/ask.jpeg">
+            <div class="shot-placeholder">
+              Add an Ask screenshot at<br />
+              <span class="code">docs/screenshots/ask.png</span>
+            </div>
+          </div>
+          <div class="screen-body">
+            <span class="screen-meta">Tab 3</span>
+            <h3>Ask</h3>
+            <p class="fine">
+              Ask runs retrieval over notes and summary documents, then uses the local model to synthesize an answer from the targeted context.
+            </p>
+            <ul class="mini-list">
+              <li>Semantic narrowing over your own data</li>
+              <li>Final answer generated from retrieved documents</li>
+              <li>Useful for question answering rather than raw note browsing</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="screen-card">
+          <div class="shot" data-files="screenshots/summarize.png,screenshots/summarize.jpg,screenshots/summarize.jpeg">
+            <div class="shot-placeholder">
+              Add a Summarize screenshot at<br />
+              <span class="code">docs/screenshots/summarize.png</span>
+            </div>
+          </div>
+          <div class="screen-body">
+            <span class="screen-meta">Tab 4</span>
+            <h3>Summarize</h3>
+            <p class="fine">
+              Summarize is where the app updates checkpoints, generates daily/weekly/monthly/yearly summary documents, and exposes model installation status.
+            </p>
+            <ul class="mini-list">
+              <li><strong>Update</strong> for incremental refresh</li>
+              <li><strong>Rebuild</strong> for replay from the configured floor</li>
+              <li>Summary documents grouped by time period</li>
+            </ul>
+          </div>
+        </article>
+      </div>
     </section>
 
-    <section class="grid">
+    <section class="two-up">
       <article class="panel">
-        <h3>If The APK Link Fails</h3>
-        <ol class="steps">
-          <li>Open the <a href="https://github.com/rheinze08/voice_ledger_lite/actions/workflows/android-apk.yml">Build Android APK</a> workflow.</li>
-          <li>Click <strong>Run workflow</strong>.</li>
-          <li>Leave <span class="code">publish_release</span> enabled if you want the release and direct download link updated automatically.</li>
-          <li>After the run finishes, refresh this page and the APK button will point to the latest uploaded asset.</li>
-        </ol>
+        <div class="section-title">
+          <div class="eyebrow">Download</div>
+          <h2>What the first run pulls down</h2>
+        </div>
+        <ul class="checklist">
+          <li><strong>APK:</strong> current debug build, roughly <span id="apk-size-inline">166 MB</span></li>
+          <li><strong>Summary model:</strong> 2.41 GB Gemma 4 E2B LiteRT-LM file</li>
+          <li><strong>Embedding model:</strong> 27.4 MB text embedder file</li>
+          <li><strong>Total expectation:</strong> about <span id="total-size-inline">2.59 GB+</span> with the current build</li>
+        </ul>
+        <div class="callout">
+          These values reflect the app’s current configured artifacts as of April 16, 2026. If the APK grows or the model target changes, the first-run total changes too.
+        </div>
       </article>
 
       <article class="panel">
-        <h3>Direct Links</h3>
-        <ul class="meta-list">
-          <li><a href="https://github.com/rheinze08/voice_ledger_lite/releases/latest">Latest release page</a></li>
+        <div class="section-title">
+          <div class="eyebrow">Links</div>
+          <h2>Direct project links</h2>
+        </div>
+        <ul class="checklist">
+          <li><a href="https://github.com/rheinze08/voice_ledger_lite/releases/latest">Latest GitHub release</a></li>
           <li><a href="https://github.com/rheinze08/voice_ledger_lite/actions">GitHub Actions runs</a></li>
-          <li><a href="https://github.com/rheinze08/voice_ledger_lite">Repository</a></li>
+          <li><a href="https://github.com/rheinze08/voice_ledger_lite/actions/workflows/android-apk.yml">APK build workflow</a></li>
+          <li><a href="https://github.com/rheinze08/voice_ledger_lite/archive/refs/heads/main.zip">Source ZIP</a></li>
         </ul>
+        <hr class="divider" />
+        <p class="fine">
+          If the main download button fails, open the latest release page directly and confirm the asset
+          <span class="code">voice-ledger-lite-debug.apk</span> is attached.
+        </p>
       </article>
     </section>
 
-    <p class="fine">
-      The page fetches release metadata from the public GitHub API. If there is no published release yet,
-      the direct download button still points to the expected latest-release asset URL.
-    </p>
+    <section class="footer-grid">
+      <article class="panel">
+        <div class="section-title">
+          <div class="eyebrow">Maintainer Note</div>
+          <h2>How to add screenshots later</h2>
+        </div>
+        <p class="fine">
+          You do not need to edit this page to add screen captures. Just place images in
+          <span class="code">docs/screenshots/</span> with the expected names and the page will load them automatically.
+        </p>
+        <ul class="checklist">
+          <li><span class="code">docs/screenshots/setup.png</span></li>
+          <li><span class="code">docs/screenshots/notes.png</span></li>
+          <li><span class="code">docs/screenshots/compose.png</span></li>
+          <li><span class="code">docs/screenshots/ask.png</span></li>
+          <li><span class="code">docs/screenshots/summarize.png</span></li>
+        </ul>
+        <p class="fine">
+          The loader also accepts <span class="code">.jpg</span> and <span class="code">.jpeg</span> versions of those same filenames.
+        </p>
+      </article>
+
+      <article class="panel">
+        <div class="section-title">
+          <div class="eyebrow">Positioning</div>
+          <h2>What this page is trying to communicate</h2>
+        </div>
+        <ul class="checklist">
+          <li>This is a local-first Android app, not a hosted SaaS</li>
+          <li>The first run is heavy because the app installs local AI models</li>
+          <li>Summarize owns summary document generation and browsing</li>
+          <li>Ask is for question answering over your stored notes and summaries</li>
+        </ul>
+      </article>
+    </section>
   </main>
 
   <script>
     const repo = "rheinze08/voice_ledger_lite";
-    const fallbackAssetUrl = `https://github.com/${repo}/releases/latest/download/voice-ledger-lite-debug.apk`;
+    const assetName = "voice-ledger-lite-debug.apk";
+    const fallbackAssetUrl = `https://github.com/${repo}/releases/latest/download/${assetName}`;
+    const summaryModelBytes = 2583085056;
+    const embeddingModelBytes = 28691620;
+    const fallbackApkBytes = 173759072;
+
     const apkLink = document.getElementById("apk-link");
-    const status = document.getElementById("release-status");
+    const releaseTitle = document.getElementById("release-title");
+    const releaseDetail = document.getElementById("release-detail");
+    const apkSize = document.getElementById("apk-size");
+    const apkSizeInline = document.getElementById("apk-size-inline");
+    const totalSize = document.getElementById("total-size");
+    const totalSizeInline = document.getElementById("total-size-inline");
+
+    function formatBytes(bytes) {
+      const gib = 1024 * 1024 * 1024;
+      const mib = 1024 * 1024;
+      if (bytes >= gib) {
+        return `${(bytes / gib).toFixed(2)} GB`;
+      }
+      return `${(bytes / mib).toFixed(1)} MB`;
+    }
+
+    function updateSizeDisplays(apkBytes) {
+      const totalBytes = apkBytes + summaryModelBytes + embeddingModelBytes;
+      const apkLabel = formatBytes(apkBytes);
+      const totalLabel = formatBytes(totalBytes);
+      apkSize.textContent = apkLabel;
+      apkSizeInline.textContent = apkLabel;
+      totalSize.textContent = `${totalLabel}+`;
+      totalSizeInline.textContent = `${totalLabel}+`;
+    }
+
+    updateSizeDisplays(fallbackApkBytes);
 
     fetch(`https://api.github.com/repos/${repo}/releases/latest`)
       .then((response) => {
@@ -273,28 +759,58 @@
         return response.json();
       })
       .then((release) => {
-        const apkAsset = (release.assets || []).find((asset) => asset.name === "voice-ledger-lite-debug.apk");
-        if (apkAsset) {
-          apkLink.href = apkAsset.browser_download_url;
-        } else {
-          apkLink.href = fallbackAssetUrl;
+        const apkAsset = (release.assets || []).find((asset) => asset.name === assetName);
+        apkLink.href = apkAsset ? apkAsset.browser_download_url : fallbackAssetUrl;
+        if (apkAsset && typeof apkAsset.size === "number") {
+          updateSizeDisplays(apkAsset.size);
         }
 
-        const published = release.published_at
+        const publishedAt = release.published_at
           ? new Date(release.published_at).toLocaleString()
           : "unknown publish time";
-        status.innerHTML = `
-          <strong>Latest release: ${release.name || release.tag_name}</strong>
-          <span>Published ${published}. ${apkAsset ? "APK asset is live." : "Release exists, but the APK asset is not attached yet."}</span>
-        `;
+
+        releaseTitle.textContent = release.name || release.tag_name || "Latest release";
+        releaseDetail.innerHTML = apkAsset
+          ? `Published ${publishedAt}. The current release includes <span class="code">${assetName}</span>.`
+          : `Published ${publishedAt}. The release exists, but <span class="code">${assetName}</span> is not attached yet.`;
       })
       .catch((error) => {
         apkLink.href = fallbackAssetUrl;
-        status.innerHTML = `
-          <strong>Latest release lookup unavailable</strong>
-          <span>${error.message}. If you have not published a release yet, run the build workflow once and refresh the page.</span>
-        `;
+        releaseTitle.textContent = "Latest release lookup unavailable";
+        releaseDetail.textContent = `${error.message}. The download button still points at the expected latest-release APK path.`;
+        updateSizeDisplays(fallbackApkBytes);
       });
+
+    function mountScreenshot(container, src) {
+      const image = new Image();
+      image.alt = "Voice Ledger Lite screenshot";
+      image.loading = "lazy";
+      image.src = src;
+      image.addEventListener("load", () => {
+        container.innerHTML = "";
+        container.appendChild(image);
+      });
+    }
+
+    function tryScreenshot(container, candidates, index = 0) {
+      if (index >= candidates.length) {
+        return;
+      }
+      const probe = new Image();
+      probe.src = candidates[index];
+      probe.addEventListener("load", () => mountScreenshot(container, candidates[index]));
+      probe.addEventListener("error", () => tryScreenshot(container, candidates, index + 1));
+    }
+
+    document.querySelectorAll(".shot").forEach((container) => {
+      const files = (container.dataset.files || "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (files.length > 0) {
+        tryScreenshot(container, files);
+      }
+    });
   </script>
 </body>
 </html>

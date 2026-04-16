@@ -14,10 +14,15 @@ import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.AggregationScheduler
 import com.voiceledger.lite.semantic.GeneratedAnswer
 import com.voiceledger.lite.semantic.LocalAggregationCoordinator
+import com.voiceledger.lite.semantic.LocalModelProvisioner
+import com.voiceledger.lite.semantic.LocalModelProvisioningStatus
 import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,12 +47,14 @@ data class LedgerUiState(
     val editingNoteId: Long? = null,
     val composeTitle: String = "",
     val composeBody: String = "",
+    val composeDate: String = defaultComposeDate(),
     val composeSelectedLabelIds: Set<Long> = emptySet(),
     val labelDraft: String = "",
     val editingLabelId: Long? = null,
     val settings: LocalAiSettings = LocalAiSettings(),
     val localStats: LocalStats = LocalStats(),
-    val latestRollups: List<RollupSnapshot> = emptyList(),
+    val modelProvisioning: LocalModelProvisioningStatus = LocalModelProvisioningStatus.checking(),
+    val rollups: List<RollupSnapshot> = emptyList(),
     val checkpoints: List<AggregationCheckpoint> = emptyList(),
     val searchQuery: String = "",
     val searchSelectedLabelIds: Set<Long> = emptySet(),
@@ -55,6 +62,9 @@ data class LedgerUiState(
     val searchResults: List<SemanticSearchHit> = emptyList(),
     val searchAnswer: GeneratedAnswer? = null,
     val searchAnswerNotice: String? = null,
+    val isInitialSetupComplete: Boolean = false,
+    val isInitialSetupDeferred: Boolean = false,
+    val isProvisioningModels: Boolean = true,
     val isRefreshingInsights: Boolean = false,
     val isSearching: Boolean = false,
     val infoMessage: String? = null,
@@ -67,10 +77,20 @@ class LedgerViewModel(
     private val settingsStore: SettingsStore,
     private val coordinator: LocalAggregationCoordinator,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(LedgerUiState(settings = settingsStore.load()))
+    private val modelProvisioner = LocalModelProvisioner(appContext, settingsStore)
+    private val _uiState = MutableStateFlow(
+        LedgerUiState(
+            settings = settingsStore.load(),
+            isInitialSetupComplete = settingsStore.isInitialSetupComplete(),
+            isInitialSetupDeferred = settingsStore.isInitialSetupDeferred(),
+        ),
+    )
     val uiState: StateFlow<LedgerUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            refreshModelProvisioning(showSuccessMessage = false)
+        }
         viewModelScope.launch {
             repository.observeNotes().collect { notes ->
                 _uiState.update { state ->
@@ -100,10 +120,7 @@ class LedgerViewModel(
         }
         viewModelScope.launch {
             repository.observeRollups().collect { rollups ->
-                val latestByGranularity = RollupGranularity.entries.mapNotNull { granularity ->
-                    rollups.filter { it.granularity == granularity }.maxByOrNull(RollupSnapshot::periodEndEpochMs)
-                }
-                _uiState.update { it.copy(latestRollups = latestByGranularity) }
+                _uiState.update { it.copy(rollups = rollups.sortedByDescending(RollupSnapshot::periodEndEpochMs)) }
             }
         }
         viewModelScope.launch {
@@ -129,6 +146,10 @@ class LedgerViewModel(
         _uiState.update { it.copy(composeBody = value) }
     }
 
+    fun updateComposeDate(value: String) {
+        _uiState.update { it.copy(composeDate = value) }
+    }
+
     fun toggleComposeLabel(labelId: Long) {
         _uiState.update { state ->
             val next = if (labelId in state.composeSelectedLabelIds) {
@@ -147,6 +168,7 @@ class LedgerViewModel(
                 editingNoteId = note.note.id,
                 composeTitle = note.note.title,
                 composeBody = note.note.body,
+                composeDate = formatComposeDate(note.note.createdAtEpochMs),
                 composeSelectedLabelIds = note.labels.map(LabelEntity::id).toSet(),
                 selectedNoteId = note.note.id,
             )
@@ -159,6 +181,7 @@ class LedgerViewModel(
                 editingNoteId = null,
                 composeTitle = "",
                 composeBody = "",
+                composeDate = defaultComposeDate(),
                 composeSelectedLabelIds = emptySet(),
             )
         }
@@ -174,6 +197,17 @@ class LedgerViewModel(
         val title = current.composeTitle.trim().ifBlank {
             body.lineSequence().firstOrNull()?.take(48) ?: "Untitled note"
         }
+        val createdAtEpochMs = runCatching {
+            LocalDate.parse(current.composeDate.trim())
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrElse {
+            _uiState.update { state ->
+                state.copy(errorMessage = "Date must use YYYY-MM-DD.")
+            }
+            return
+        }
 
         viewModelScope.launch {
             val savedId = repository.saveNote(
@@ -181,6 +215,7 @@ class LedgerViewModel(
                 title = title,
                 body = body,
                 labelIds = current.composeSelectedLabelIds,
+                createdAtEpochMs = createdAtEpochMs,
             )
             _uiState.update {
                 it.copy(
@@ -189,6 +224,7 @@ class LedgerViewModel(
                     editingNoteId = null,
                     composeTitle = "",
                     composeBody = "",
+                    composeDate = defaultComposeDate(),
                     composeSelectedLabelIds = emptySet(),
                     infoMessage = if (current.editingNoteId == null) {
                         "Note saved locally. Aggregation is now dirty from this note onward."
@@ -285,6 +321,22 @@ class LedgerViewModel(
         _uiState.update { it.copy(settings = it.settings.copy(backgroundProcessingEnabled = enabled)) }
     }
 
+    fun retryModelProvisioning() {
+        viewModelScope.launch {
+            refreshModelProvisioning(showSuccessMessage = true)
+        }
+    }
+
+    fun continueWithoutModels() {
+        settingsStore.setInitialSetupDeferred(true)
+        _uiState.update {
+            it.copy(
+                isInitialSetupDeferred = true,
+                infoMessage = "Continuing without local AI for now. Summaries and Ask will stay limited until the models finish installing.",
+            )
+        }
+    }
+
     fun saveSettings() {
         val normalized = _uiState.value.settings.normalized()
         settingsStore.save(normalized)
@@ -341,8 +393,11 @@ class LedgerViewModel(
             }
             try {
                 val response = coordinator.search(query, current.searchSelectedLabelIds)
+                val modelStatus = modelProvisioner.currentStatus()
                 _uiState.update {
                     it.copy(
+                        settings = settingsStore.load(),
+                        modelProvisioning = modelStatus,
                         isSearching = false,
                         searchRoute = response.route,
                         searchResults = response.hits,
@@ -381,8 +436,11 @@ class LedgerViewModel(
             }
             try {
                 val message = coordinator.runAggregation(rebuildFromStartDate)
+                val modelStatus = modelProvisioner.currentStatus()
                 _uiState.update {
                     it.copy(
+                        settings = settingsStore.load(),
+                        modelProvisioning = modelStatus,
                         isRefreshingInsights = false,
                         infoMessage = message,
                     )
@@ -416,4 +474,49 @@ class LedgerViewModel(
             notesThisMonth = notes.count { it.note.createdAtEpochMs >= monthAgo },
         )
     }
+
+    private suspend fun refreshModelProvisioning(showSuccessMessage: Boolean) {
+        _uiState.update {
+            it.copy(
+                isProvisioningModels = true,
+                modelProvisioning = LocalModelProvisioningStatus.checking(),
+            )
+        }
+        val status = modelProvisioner.ensureInstalled { progress ->
+            _uiState.update {
+                it.copy(
+                    modelProvisioning = progress,
+                    isProvisioningModels = true,
+                )
+            }
+        }
+        val isSetupComplete = status.allReady
+        if (isSetupComplete) {
+            settingsStore.setInitialSetupComplete(true)
+            settingsStore.setInitialSetupDeferred(false)
+        }
+        _uiState.update {
+            it.copy(
+                settings = settingsStore.load(),
+                modelProvisioning = status,
+                isInitialSetupComplete = settingsStore.isInitialSetupComplete(),
+                isInitialSetupDeferred = settingsStore.isInitialSetupDeferred(),
+                isProvisioningModels = false,
+                infoMessage = if (showSuccessMessage && status.allReady) {
+                    "Local models are installed and ready."
+                } else {
+                    it.infoMessage
+                },
+            )
+        }
+    }
+}
+
+private fun defaultComposeDate(): String = LocalDate.now().toString()
+
+private fun formatComposeDate(epochMs: Long): String {
+    return Instant.ofEpochMilli(epochMs)
+        .atZone(ZoneId.systemDefault())
+        .toLocalDate()
+        .toString()
 }

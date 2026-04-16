@@ -66,10 +66,8 @@ class LocalSummaryEngine(
                 modelLabel = model.label,
                 title = parsed.title.ifBlank { defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs) },
                 overview = parsed.overview.trim(),
-                highlights = parsed.highlights.map(String::trim).filter(String::isNotBlank).take(5),
-                themes = parsed.themes
-                    .map { ThemeBucket(it.label.trim(), it.summary.trim(), it.noteIds.distinct()) }
-                    .filter { it.label.isNotBlank() && it.summary.isNotBlank() },
+                highlights = emptyList(),
+                themes = emptyList(),
             )
         }
     }
@@ -80,62 +78,29 @@ class LocalSummaryEngine(
         periodStartEpochMs: Long,
         periodEndEpochMs: Long,
     ): AggregateInsight {
-        val allText = documents.joinToString(" ") { "${it.title} ${it.body}" }
-        val keywords = topKeywords(allText)
-        val highlights = documents
-            .sortedByDescending { it.createdAtEpochMs }
-            .take(4)
-            .map { document ->
-                buildString {
-                    append(document.title.ifBlank { "Untitled" })
-                    if (document.body.isNotBlank()) {
-                        append(": ")
-                        append(document.body.lineSequence().firstOrNull()?.take(100) ?: document.body.take(100))
-                    }
-                }
-            }
-            .ifEmpty { listOf("No source notes were available for this rollup.") }
-
-        val themes = keywords.take(3).mapNotNull { keyword ->
-            val matchingDocs = documents.filter { document ->
-                val lowered = "${document.title} ${document.body}".lowercase()
-                lowered.contains(keyword)
-            }
-            if (matchingDocs.isEmpty()) {
-                null
-            } else {
-                ThemeBucket(
-                    label = keyword.replaceFirstChar { it.uppercase() },
-                    summary = "Notes repeatedly mention $keyword across ${matchingDocs.size} item(s).",
-                    noteIds = matchingDocs.flatMap(SemanticDocument::noteIds).distinct(),
-                )
-            }
-        }.ifEmpty {
-            listOf(
-                ThemeBucket(
-                    label = "General",
-                    summary = "This rollup combines ${documents.size} item(s) from the selected period.",
-                    noteIds = documents.flatMap(SemanticDocument::noteIds).distinct(),
-                ),
-            )
-        }
-
         val rangeLabel = formatDateRange(periodStartEpochMs, periodEndEpochMs)
         val overview = buildString {
-            append("Aggregated ${documents.size} item(s) for $rangeLabel.")
-            if (keywords.isNotEmpty()) {
-                append(" Recurring threads: ")
-                append(keywords.take(4).joinToString(", "))
-                append('.')
+            append("Summary for $rangeLabel based on ${documents.size} source item(s).")
+            val sampleLines = documents
+                .sortedByDescending(SemanticDocument::createdAtEpochMs)
+                .take(3)
+                .mapNotNull { document ->
+                    document.body.lineSequence().firstOrNull()?.trim()?.takeIf(String::isNotBlank)?.let { line ->
+                        "${document.title.ifBlank { "Untitled" }}: $line"
+                    }
+                }
+            if (sampleLines.isNotEmpty()) {
+                append(' ')
+                append(sampleLines.joinToString(" "))
             }
         }
 
         return AggregateInsight(
-            modelLabel = "Built-in local summarizer",
+            modelLabel = "Built-in local summarizer (fallback)",
             title = defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs),
             overview = overview,
-            highlights = highlights,
-            themes = themes,
+            highlights = emptyList(),
+            themes = emptyList(),
         )
     }
 
@@ -166,26 +131,19 @@ class LocalSummaryEngine(
         }
 
         return """
-            Summarize the following ${granularity.name.lowercase()} journal material from ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.
+            Summarize and compress the following ${granularity.name.lowercase()} journal material from ${formatDateRange(periodStartEpochMs, periodEndEpochMs)} into one summary document.
+            This rollup may itself be used as source material for the next level of summarization.
             Return strict JSON in this exact shape:
             {
               "title": "short title",
-              "overview": "short paragraph",
-              "highlights": ["bullet", "bullet"],
-              "themes": [
-                {
-                  "label": "theme name",
-                  "summary": "why the notes belong together",
-                  "noteIds": [1, 2]
-                }
-              ]
+              "overview": "dense summary paragraph or short multi-sentence summary"
             }
 
             Rules:
-            - Keep the overview concise and grounded in the source text.
-            - Use 2 to 5 highlights.
-            - Use 1 to 4 themes.
-            - noteIds must only contain ids from the provided note_ids values.
+            - Ground the summary strictly in the provided source text.
+            - Write one coherent summary document, not bullets, themes, or metadata.
+            - Preserve the most important facts, decisions, events, and repeated signals.
+            - Prefer compression over verbosity.
             - Do not wrap the JSON in markdown fences.
 
             Sources:
@@ -193,29 +151,12 @@ class LocalSummaryEngine(
         """.trimIndent()
     }
 
-    private fun topKeywords(text: String): List<String> {
-        val stopWords = setOf(
-            "about", "after", "again", "along", "also", "been", "being", "between", "could",
-            "from", "have", "into", "just", "note", "notes", "that", "them", "then", "there",
-            "they", "this", "today", "with", "were", "will", "would", "your", "journal",
-        )
-        return text.lowercase()
-            .split(Regex("[^a-z0-9]+"))
-            .filter { token -> token.length >= 4 && token !in stopWords }
-            .groupingBy { it }
-            .eachCount()
-            .entries
-            .sortedByDescending { it.value }
-            .map { it.key }
-            .distinct()
-    }
-
     private fun defaultTitle(
         granularity: RollupGranularity,
         periodStartEpochMs: Long,
         periodEndEpochMs: Long,
     ): String {
-        return "${granularity.name.lowercase().replaceFirstChar { it.uppercase() }} rollup: ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}"
+        return "${granularity.name.lowercase().replaceFirstChar { it.uppercase() }} summary: ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}"
     }
 
     private fun formatDateRange(startEpochMs: Long, endEpochMs: Long): String {
@@ -236,14 +177,5 @@ class LocalSummaryEngine(
     private data class ModelInsightPayload(
         val title: String = "",
         val overview: String,
-        val highlights: List<String>,
-        val themes: List<ModelThemePayload>,
-    )
-
-    @Serializable
-    private data class ModelThemePayload(
-        val label: String,
-        val summary: String,
-        val noteIds: List<Long>,
     )
 }
