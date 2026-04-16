@@ -9,8 +9,9 @@ import kotlin.math.sqrt
 class LocalEmbeddingEngine(private val context: Context) {
     suspend fun embed(text: String, settings: LocalAiSettings): FloatArray {
         val normalized = settings.normalized()
-        if (normalized.embeddingModelPath.isNotBlank()) {
-            runCatching { return embedWithModel(text, normalized.embeddingModelPath) }
+        val model = LocalModelLocator.resolveEmbeddingModel(context, normalized)
+        if (model != null) {
+            runCatching { return embedWithModel(text, model.path) }
         }
         return embedHashed(text, normalized.embeddingDimensions)
     }

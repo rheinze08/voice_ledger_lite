@@ -60,9 +60,17 @@ data class SearchRouteStep(
     val score: Float,
 )
 
+data class GeneratedAnswer(
+    val text: String,
+    val modelLabel: String,
+    val sourceCount: Int,
+)
+
 data class SemanticSearchResponse(
     val route: List<SearchRouteStep>,
     val hits: List<SemanticSearchHit>,
+    val answer: GeneratedAnswer? = null,
+    val answerNotice: String? = null,
 )
 
 data class SemanticDocument(

@@ -125,12 +125,12 @@ class LedgerRepository(
 
     suspend fun saveLabel(labelId: Long?, rawName: String): LabelEntity {
         val cleanedName = normalizeLabelDisplay(rawName)
-        require(cleanedName.isNotBlank()) { "Label name cannot be empty." }
+        require(cleanedName.isNotBlank()) { "Tag name cannot be empty." }
 
         val normalizedName = normalizeLabelKey(cleanedName)
         val existing = labelDao.getByNormalizedName(normalizedName)
         if (existing != null && existing.id != labelId) {
-            error("Label \"$cleanedName\" already exists.")
+            error("Tag \"$cleanedName\" already exists.")
         }
 
         return if (labelId == null) {
@@ -144,7 +144,7 @@ class LedgerRepository(
             labelDao.getById(savedId) ?: error("Label save failed.")
         } else {
             val current = labelDao.getById(labelId)
-                ?: error("That label no longer exists.")
+                ?: error("That tag no longer exists.")
             val updated = current.copy(
                 name = cleanedName,
                 normalizedName = normalizedName,

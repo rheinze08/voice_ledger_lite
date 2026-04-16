@@ -26,7 +26,8 @@ class LocalSummaryEngine(
         settings: LocalAiSettings,
     ): AggregateInsight {
         val normalized = settings.normalized()
-        if (normalized.summaryModelPath.isNotBlank()) {
+        val model = LocalModelLocator.resolveSummaryModel(context, normalized)
+        if (model != null) {
             runCatching {
                 return summarizeWithModel(
                     documents = documents,
@@ -34,6 +35,7 @@ class LocalSummaryEngine(
                     periodStartEpochMs = periodStartEpochMs,
                     periodEndEpochMs = periodEndEpochMs,
                     settings = normalized,
+                    model = model,
                 )
             }
         }
@@ -46,9 +48,10 @@ class LocalSummaryEngine(
         periodStartEpochMs: Long,
         periodEndEpochMs: Long,
         settings: LocalAiSettings,
+        model: ResolvedLocalModel,
     ): AggregateInsight {
         val options = LlmInference.LlmInferenceOptions.builder()
-            .setModelPath(settings.summaryModelPath)
+            .setModelPath(model.path)
             .setMaxTokens(settings.maxTokens)
             .setMaxTopK(settings.topK)
             .build()
@@ -58,7 +61,7 @@ class LocalSummaryEngine(
             val rawResponse = inference.generateResponse(prompt)
             val parsed = json.decodeFromString<ModelInsightPayload>(extractJsonObject(rawResponse))
             AggregateInsight(
-                modelLabel = "On-device task bundle",
+                modelLabel = model.label,
                 title = parsed.title.ifBlank { defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs) },
                 overview = parsed.overview.trim(),
                 highlights = parsed.highlights.map(String::trim).filter(String::isNotBlank).take(5),

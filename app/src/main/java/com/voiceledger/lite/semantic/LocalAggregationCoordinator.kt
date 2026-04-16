@@ -5,6 +5,7 @@ import com.voiceledger.lite.data.LabelEntity
 import com.voiceledger.lite.data.LedgerRepository
 import com.voiceledger.lite.data.LocalAiSettings
 import com.voiceledger.lite.data.NoteEntity
+import com.voiceledger.lite.data.NoteWithLabels
 import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.data.SemanticEntryEntity
 import com.voiceledger.lite.data.SettingsStore
@@ -26,6 +27,7 @@ class LocalAggregationCoordinator(
 ) {
     private val summaryEngine = LocalSummaryEngine(context)
     private val embeddingEngine = LocalEmbeddingEngine(context)
+    private val answerEngine = LocalAnswerEngine(context)
     private val zoneId = ZoneId.systemDefault()
 
     suspend fun runAggregation(rebuildFromStartDate: Boolean = false): String {
@@ -34,7 +36,7 @@ class LocalAggregationCoordinator(
         reindexNotes(notes, settings)
 
         if (notes.isEmpty()) {
-            return "No notes yet. Local aggregation will start after the first note."
+            return "No notes yet. Create Summary will begin after the first note."
         }
 
         val configuredFloor = settings.summaryStartDate
@@ -110,7 +112,7 @@ class LocalAggregationCoordinator(
             }
         }
 
-        return "Local rollups and semantic search index refreshed."
+        return "Summaries and semantic search index refreshed."
     }
 
     suspend fun search(query: String, labelIds: Set<Long> = emptySet()): SemanticSearchResponse {
@@ -140,6 +142,7 @@ class LocalAggregationCoordinator(
             .filter { it.entry.kind == "rollup" }
             .associateBy { it.entry.rollupId ?: it.entry.sourceId }
         val rollups = repository.allRollups()
+        val rollupsById = rollups.associateBy(RollupSnapshot::id)
 
         val topYears = selectStage(
             rollups = rollups.filter { it.granularity == RollupGranularity.YEARLY },
@@ -216,10 +219,7 @@ class LocalAggregationCoordinator(
             )
         }
 
-        if (noteHits.size >= settings.searchResultLimit) {
-            return SemanticSearchResponse(route = route, hits = noteHits)
-        }
-
+        val remainingResultSlots = (settings.searchResultLimit - noteHits.size).coerceAtLeast(0)
         val rollupHits = (topDays + topWeeks + topMonths + topYears)
             .distinctBy { it.rollup.id }
             .map { scored ->
@@ -237,11 +237,31 @@ class LocalAggregationCoordinator(
             .filter { hit ->
                 noteHits.none { existing -> existing.entryId == hit.entryId }
             }
-            .take(settings.searchResultLimit - noteHits.size)
+            .take(remainingResultSlots)
+
+        val hits = if (noteHits.size >= settings.searchResultLimit) {
+            noteHits
+        } else {
+            noteHits + rollupHits
+        }
+        val answerDocuments = buildAnswerDocuments(
+            hits = hits,
+            notesById = noteMap,
+            rollupsById = rollupsById,
+        )
+        val answer = runCatching {
+            answerEngine.answer(normalized, answerDocuments, settings)
+        }.getOrNull()
 
         return SemanticSearchResponse(
             route = route,
-            hits = noteHits + rollupHits,
+            hits = hits,
+            answer = answer,
+            answerNotice = if (hits.isNotEmpty() && answer == null) {
+                "No local answer model was found. Ask is showing retrieved notes and summaries only."
+            } else {
+                null
+            },
         )
     }
 
@@ -371,6 +391,45 @@ class LocalAggregationCoordinator(
             timelineIds.isEmpty() -> labelScope
             else -> timelineIds.intersect(labelScope).ifEmpty { labelScope }
         }
+    }
+
+    private fun buildAnswerDocuments(
+        hits: List<SemanticSearchHit>,
+        notesById: Map<Long, NoteWithLabels>,
+        rollupsById: Map<String, RollupSnapshot>,
+    ): List<SemanticDocument> {
+        return hits.asSequence()
+            .mapNotNull { hit ->
+                when {
+                    hit.noteId != null -> {
+                        val note = notesById[hit.noteId] ?: return@mapNotNull null
+                        SemanticDocument(
+                            sourceId = "note:${note.note.id}",
+                            title = note.note.title,
+                            body = note.note.body,
+                            noteIds = listOf(note.note.id),
+                            createdAtEpochMs = note.note.createdAtEpochMs,
+                        )
+                    }
+                    hit.rollupId != null -> {
+                        val rollup = rollupsById[hit.rollupId] ?: return@mapNotNull null
+                        SemanticDocument(
+                            sourceId = rollup.id,
+                            title = rollup.title,
+                            body = buildString {
+                                appendLine(rollup.overview)
+                                rollup.highlights.forEach { appendLine(it) }
+                            }.trim(),
+                            noteIds = rollup.noteIds,
+                            createdAtEpochMs = rollup.periodStartEpochMs,
+                        )
+                    }
+                    else -> null
+                }
+            }
+            .distinctBy(SemanticDocument::sourceId)
+            .take(6)
+            .toList()
     }
 
     private fun selectStage(

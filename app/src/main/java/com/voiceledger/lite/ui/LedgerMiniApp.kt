@@ -25,11 +25,11 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.ListAlt
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -62,6 +62,7 @@ import com.voiceledger.lite.data.LabelEntity
 import com.voiceledger.lite.data.LocalStats
 import com.voiceledger.lite.data.NoteWithLabels
 import com.voiceledger.lite.semantic.AggregationCheckpoint
+import com.voiceledger.lite.semantic.GeneratedAnswer
 import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
@@ -73,8 +74,6 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun LedgerMiniApp(
     viewModel: LedgerViewModel,
-    onImportSummaryModel: () -> Unit,
-    onImportEmbeddingModel: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -100,7 +99,7 @@ fun LedgerMiniApp(
                     Column {
                         Text("Voice Ledger Lite")
                         Text(
-                            text = "Phone-local notes, labels, rollups, and search",
+                            text = "Phone-local notes, tags, rollups, and search",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -120,7 +119,7 @@ fun LedgerMiniApp(
                                     AppTab.NOTES -> Icons.Filled.ListAlt
                                     AppTab.COMPOSE -> Icons.Filled.EditNote
                                     AppTab.INSIGHTS -> Icons.Filled.Insights
-                                    AppTab.SETTINGS -> Icons.Filled.Settings
+                                    AppTab.SUMMARIZE -> Icons.Filled.AutoAwesome
                                 },
                                 contentDescription = tab.label,
                             )
@@ -149,18 +148,15 @@ fun LedgerMiniApp(
                 onSave = viewModel::saveDraft,
                 onClear = viewModel::clearComposer,
             )
-            AppTab.INSIGHTS -> InsightsScreen(
+            AppTab.INSIGHTS -> AskScreen(
                 state = state,
                 paddingValues = innerPadding,
-                onRefresh = { viewModel.refreshInsights(false) },
-                onRebuild = { viewModel.refreshInsights(true) },
-                onOpenNote = viewModel::selectNote,
                 onSearchChange = viewModel::updateSearchQuery,
                 onToggleSearchLabel = viewModel::toggleSearchLabel,
                 onSearch = viewModel::runSearch,
                 onOpenSearchHit = viewModel::openSearchHit,
             )
-            AppTab.SETTINGS -> SettingsScreen(
+            AppTab.SUMMARIZE -> SummarizeScreen(
                 state = state,
                 paddingValues = innerPadding,
                 onLabelDraftChange = viewModel::updateLabelDraft,
@@ -168,19 +164,11 @@ fun LedgerMiniApp(
                 onClearLabelEditor = viewModel::clearLabelEditor,
                 onSaveLabel = viewModel::saveLabel,
                 onDeleteLabel = viewModel::deleteEditingLabel,
-                onSummaryModelPathChange = viewModel::updateSummaryModelPath,
-                onEmbeddingModelPathChange = viewModel::updateEmbeddingModelPath,
-                onSummaryStartDateChange = viewModel::updateSummaryStartDate,
-                onMaxSourcesChange = viewModel::updateMaxSourcesPerRollup,
-                onEmbeddingDimensionsChange = viewModel::updateEmbeddingDimensions,
-                onSearchLimitChange = viewModel::updateSearchResultLimit,
-                onMaxTokensChange = viewModel::updateMaxTokens,
-                onTopKChange = viewModel::updateTopK,
-                onTemperatureChange = viewModel::updateTemperature,
                 onBackgroundProcessingChange = viewModel::updateBackgroundProcessing,
-                onImportSummaryModel = onImportSummaryModel,
-                onImportEmbeddingModel = onImportEmbeddingModel,
+                onRefresh = { viewModel.refreshInsights(false) },
+                onRebuild = { viewModel.refreshInsights(true) },
                 onSave = viewModel::saveSettings,
+                onOpenNote = viewModel::selectNote,
             )
         }
     }
@@ -190,8 +178,8 @@ private val AppTab.label: String
     get() = when (this) {
         AppTab.NOTES -> "Notes"
         AppTab.COMPOSE -> "Compose"
-        AppTab.INSIGHTS -> "Insights"
-        AppTab.SETTINGS -> "Settings"
+        AppTab.INSIGHTS -> "Ask"
+        AppTab.SUMMARIZE -> "Summarize"
     }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -308,7 +296,7 @@ private fun ComposeScreen(
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            "Notes stay local. Labels help with note-level narrowing, and rollups rebuild from the dirty checkpoint forward.",
+            "Notes stay local. Tags help with note-level narrowing, and rollups rebuild from the dirty checkpoint forward.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -328,21 +316,30 @@ private fun ComposeScreen(
             label = { Text("Body") },
             minLines = 10,
         )
-        Text("Labels", style = MaterialTheme.typography.titleMedium)
+        Text("Tags", style = MaterialTheme.typography.titleMedium)
         if (state.labels.isEmpty()) {
             Text(
-                "Create reusable labels in Settings, then come back here to tag notes.",
+                "Create reusable tags in Summarize, then come back here to apply them.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 state.labels.forEach { label ->
-                    FilterChip(
-                        selected = label.id in state.composeSelectedLabelIds,
-                        onClick = { onToggleLabel(label.id) },
-                        label = { Text(label.name) },
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleLabel(label.id) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        val selected = label.id in state.composeSelectedLabelIds
+                        Checkbox(
+                            checked = selected,
+                            onCheckedChange = null,
+                        )
+                        Text(text = label.name, modifier = Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -358,12 +355,9 @@ private fun ComposeScreen(
 }
 
 @Composable
-private fun InsightsScreen(
+private fun AskScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
-    onRefresh: () -> Unit,
-    onRebuild: () -> Unit,
-    onOpenNote: (Long?) -> Unit,
     onSearchChange: (String) -> Unit,
     onToggleSearchLabel: (Long) -> Unit,
     onSearch: () -> Unit,
@@ -382,9 +376,168 @@ private fun InsightsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("Local aggregation", style = MaterialTheme.typography.headlineSmall)
+                    Text("Ask", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        "Search routes through yearly, monthly, weekly, and daily rollups before it drops to raw notes.",
+                        "Ask across notes and rollups with optional tag filters.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    SearchCard(
+                        state = state,
+                        onSearchChange = onSearchChange,
+                        onToggleSearchLabel = onToggleSearchLabel,
+                        onSearch = onSearch,
+                        onOpenSearchHit = onOpenSearchHit,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SearchCard(
+    state: LedgerUiState,
+    onSearchChange: (String) -> Unit,
+    onToggleSearchLabel: (Long) -> Unit,
+    onSearch: () -> Unit,
+    onOpenSearchHit: (SemanticSearchHit) -> Unit,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = onSearchChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Ask across notes and rollups") },
+            singleLine = true,
+        )
+        if (state.labels.isNotEmpty()) {
+            Text(
+                "Optional tags narrow the raw-note layer while the timeline routing stays broad.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.labels.forEach { label ->
+                    FilterChip(
+                        selected = label.id in state.searchSelectedLabelIds,
+                        onClick = { onToggleSearchLabel(label.id) },
+                        label = { Text(label.name) },
+                    )
+                }
+            }
+        }
+        Button(onClick = onSearch, enabled = !state.isSearching) {
+            Text(if (state.isSearching) "Searching" else "Ask")
+        }
+        state.searchAnswer?.let { answer ->
+            AnswerPanel(answer)
+        }
+        state.searchAnswerNotice?.let { notice ->
+            Text(
+                notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (state.searchRoute.isNotEmpty()) {
+            Text("Route", style = MaterialTheme.typography.titleMedium)
+            RouteStrip(route = state.searchRoute)
+        }
+        if (state.searchResults.isEmpty()) {
+            Text(
+                "Run aggregation first, then ask. Results will show the best route through time before surfacing notes.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            state.searchResults.forEach { hit ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenSearchHit(hit) },
+                    shape = RoundedCornerShape(18.dp),
+                    tonalElevation = 2.dp,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(hit.title, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "${hit.kindLabel()} | score ${"%.3f".format(hit.score)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (hit.labels.isNotEmpty()) {
+                            LabelNameStrip(labelNames = hit.labels)
+                        }
+                        Text(hit.preview, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnswerPanel(answer: GeneratedAnswer) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.primaryContainer,
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Answer", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Generated with ${answer.modelLabel} from ${answer.sourceCount} retrieved source(s).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(answer.text, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SummarizeScreen(
+    state: LedgerUiState,
+    paddingValues: PaddingValues,
+    onLabelDraftChange: (String) -> Unit,
+    onEditLabel: (Long) -> Unit,
+    onClearLabelEditor: () -> Unit,
+    onSaveLabel: () -> Unit,
+    onDeleteLabel: () -> Unit,
+    onBackgroundProcessingChange: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+    onRebuild: () -> Unit,
+    onOpenNote: (Long?) -> Unit,
+    onSave: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            ElevatedCard {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Create Summary", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "Create summaries to refresh rollups and checkpoints. Background processing can keep this current automatically.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -397,7 +550,7 @@ private fun InsightsScreen(
                                 )
                                 Spacer(Modifier.width(10.dp))
                             }
-                            Text(if (state.isRefreshingInsights) "Running" else "Run now")
+                            Text(if (state.isRefreshingInsights) "Creating" else "Create summary")
                         }
                         OutlinedButton(onClick = onRebuild, enabled = !state.isRefreshingInsights) {
                             Text("Rebuild since start")
@@ -408,15 +561,6 @@ private fun InsightsScreen(
         }
         item {
             StatsRow(state.localStats)
-        }
-        item {
-            SearchCard(
-                state = state,
-                onSearchChange = onSearchChange,
-                onToggleSearchLabel = onToggleSearchLabel,
-                onSearch = onSearch,
-                onOpenSearchHit = onOpenSearchHit,
-            )
         }
         if (state.checkpoints.isNotEmpty()) {
             item {
@@ -434,131 +578,15 @@ private fun InsightsScreen(
                 RollupCard(rollup, onOpenNote)
             }
         }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun SearchCard(
-    state: LedgerUiState,
-    onSearchChange: (String) -> Unit,
-    onToggleSearchLabel: (Long) -> Unit,
-    onSearch: () -> Unit,
-    onOpenSearchHit: (SemanticSearchHit) -> Unit,
-) {
-    ElevatedCard {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("Hierarchical search", style = MaterialTheme.typography.titleLarge)
-            OutlinedTextField(
-                value = state.searchQuery,
-                onValueChange = onSearchChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Ask across notes and rollups") },
-                singleLine = true,
-            )
-            if (state.labels.isNotEmpty()) {
-                Text(
-                    "Optional labels narrow the raw-note layer while the timeline routing stays broad.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    state.labels.forEach { label ->
-                        FilterChip(
-                            selected = label.id in state.searchSelectedLabelIds,
-                            onClick = { onToggleSearchLabel(label.id) },
-                            label = { Text(label.name) },
-                        )
-                    }
-                }
-            }
-            Button(onClick = onSearch, enabled = !state.isSearching) {
-                Text(if (state.isSearching) "Searching" else "Search")
-            }
-            if (state.searchRoute.isNotEmpty()) {
-                Text("Route", style = MaterialTheme.typography.titleMedium)
-                RouteStrip(route = state.searchRoute)
-            }
-            if (state.searchResults.isEmpty()) {
-                Text(
-                    "Run aggregation first, then search. Results will show the best route through time before surfacing notes.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                state.searchResults.forEach { hit ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenSearchHit(hit) },
-                        shape = RoundedCornerShape(18.dp),
-                        tonalElevation = 2.dp,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(hit.title, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                "${hit.kindLabel()} | score ${"%.3f".format(hit.score)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (hit.labels.isNotEmpty()) {
-                                LabelNameStrip(labelNames = hit.labels)
-                            }
-                            Text(hit.preview, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun SettingsScreen(
-    state: LedgerUiState,
-    paddingValues: PaddingValues,
-    onLabelDraftChange: (String) -> Unit,
-    onEditLabel: (Long) -> Unit,
-    onClearLabelEditor: () -> Unit,
-    onSaveLabel: () -> Unit,
-    onDeleteLabel: () -> Unit,
-    onSummaryModelPathChange: (String) -> Unit,
-    onEmbeddingModelPathChange: (String) -> Unit,
-    onSummaryStartDateChange: (String) -> Unit,
-    onMaxSourcesChange: (String) -> Unit,
-    onEmbeddingDimensionsChange: (String) -> Unit,
-    onSearchLimitChange: (String) -> Unit,
-    onMaxTokensChange: (String) -> Unit,
-    onTopKChange: (String) -> Unit,
-    onTemperatureChange: (String) -> Unit,
-    onBackgroundProcessingChange: (Boolean) -> Unit,
-    onImportSummaryModel: () -> Unit,
-    onImportEmbeddingModel: () -> Unit,
-    onSave: () -> Unit,
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(paddingValues),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
         item {
             ElevatedCard {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("Labels", style = MaterialTheme.typography.headlineSmall)
+                    Text("Tags", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        "Keep a small reusable set. Notes can carry multiple labels, and search can filter by them later.",
+                        "Keep a small reusable set. Notes can carry multiple tags, and search can filter by them later.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -566,12 +594,15 @@ private fun SettingsScreen(
                         value = state.labelDraft,
                         onValueChange = onLabelDraftChange,
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text(if (state.editingLabelId == null) "New label" else "Edit label") },
+                        label = { Text(if (state.editingLabelId == null) "New tag" else "Edit tag") },
                         singleLine = true,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = onSaveLabel) {
-                            Text(if (state.editingLabelId == null) "Add label" else "Save label")
+                        Button(
+                            onClick = onSaveLabel,
+                            enabled = state.editingLabelId != null || state.labels.size < MAX_TAGS,
+                        ) {
+                            Text(if (state.editingLabelId == null) "Add tag" else "Save tag")
                         }
                         if (state.editingLabelId != null) {
                             OutlinedButton(onClick = onClearLabelEditor) {
@@ -582,9 +613,14 @@ private fun SettingsScreen(
                             }
                         }
                     }
+                    Text(
+                        "${state.labels.size} / $MAX_TAGS tags saved",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (state.labels.isEmpty()) {
                         Text(
-                            "No labels yet.",
+                            "No tags yet.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -598,111 +634,22 @@ private fun SettingsScreen(
                                 )
                             }
                         }
+                        if (state.editingLabelId == null && state.labels.size >= MAX_TAGS) {
+                            Text(
+                                "You have reached the tag limit. Edit or delete an existing tag to make room for a new one.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
         }
         item {
-            Text("Local AI settings", style = MaterialTheme.typography.headlineSmall)
-        }
-        item {
             Text(
-                "Import a `.task` summary model for on-device generation and optionally a local text embedding model. If those files are absent, the app falls back to built-in local heuristics.",
+                "Background processing keeps summaries and semantic search refreshed when the device is charging.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onImportSummaryModel) {
-                    Icon(Icons.Filled.AutoAwesome, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Import summary model")
-                }
-                OutlinedButton(onClick = onImportEmbeddingModel) {
-                    Text("Import embedding model")
-                }
-            }
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.summaryModelPath,
-                onValueChange = onSummaryModelPathChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Summary model path") },
-                minLines = 2,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.embeddingModelPath,
-                onValueChange = onEmbeddingModelPathChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Embedding model path") },
-                minLines = 2,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.summaryStartDate,
-                onValueChange = onSummaryStartDateChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Summarize since (YYYY-MM-DD)") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.maxSourcesPerRollup.toString(),
-                onValueChange = onMaxSourcesChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Max sources per rollup") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.embeddingDimensions.toString(),
-                onValueChange = onEmbeddingDimensionsChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Fallback embedding dimensions") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.searchResultLimit.toString(),
-                onValueChange = onSearchLimitChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Search result limit") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.maxTokens.toString(),
-                onValueChange = onMaxTokensChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Summary max tokens") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.topK.toString(),
-                onValueChange = onTopKChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Summary top K") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.settings.temperature.toString(),
-                onValueChange = onTemperatureChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Summary temperature") },
-                singleLine = true,
             )
         }
         item {
@@ -727,7 +674,7 @@ private fun SettingsScreen(
         }
         item {
             Button(onClick = onSave) {
-                Text("Save settings")
+                Text("Save changes")
             }
         }
     }
@@ -781,7 +728,11 @@ private fun CheckpointCard(checkpoint: AggregationCheckpoint) {
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "Dirty from: ${checkpoint.dirtyFromEpochMs?.let(::formatTimestamp) ?: "Clean"}",
+                if (checkpoint.dirtyFromEpochMs == null) {
+                    "Status: Up to date"
+                } else {
+                    "Status: Needs rebuild since ${formatTimestamp(checkpoint.dirtyFromEpochMs)}"
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
             checkpoint.lastError?.takeIf(String::isNotBlank)?.let { error ->

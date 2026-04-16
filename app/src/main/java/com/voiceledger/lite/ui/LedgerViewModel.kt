@@ -1,7 +1,6 @@
 package com.voiceledger.lite.ui
 
 import android.content.Context
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voiceledger.lite.data.LabelEntity
@@ -13,9 +12,8 @@ import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.data.SettingsStore
 import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.AggregationScheduler
+import com.voiceledger.lite.semantic.GeneratedAnswer
 import com.voiceledger.lite.semantic.LocalAggregationCoordinator
-import com.voiceledger.lite.semantic.ModelImportTarget
-import com.voiceledger.lite.semantic.ModelStore
 import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
@@ -31,8 +29,10 @@ enum class AppTab {
     NOTES,
     COMPOSE,
     INSIGHTS,
-    SETTINGS,
+    SUMMARIZE,
 }
+
+const val MAX_TAGS = 5
 
 data class LedgerUiState(
     val selectedTab: AppTab = AppTab.NOTES,
@@ -53,6 +53,8 @@ data class LedgerUiState(
     val searchSelectedLabelIds: Set<Long> = emptySet(),
     val searchRoute: List<SearchRouteStep> = emptyList(),
     val searchResults: List<SemanticSearchHit> = emptyList(),
+    val searchAnswer: GeneratedAnswer? = null,
+    val searchAnswerNotice: String? = null,
     val isRefreshingInsights: Boolean = false,
     val isSearching: Boolean = false,
     val infoMessage: String? = null,
@@ -64,7 +66,6 @@ class LedgerViewModel(
     private val repository: LedgerRepository,
     private val settingsStore: SettingsStore,
     private val coordinator: LocalAggregationCoordinator,
-    private val modelStore: ModelStore,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(LedgerUiState(settings = settingsStore.load()))
     val uiState: StateFlow<LedgerUiState> = _uiState.asStateFlow()
@@ -221,7 +222,7 @@ class LedgerViewModel(
             it.copy(
                 editingLabelId = label.id,
                 labelDraft = label.name,
-                selectedTab = AppTab.SETTINGS,
+                selectedTab = AppTab.SUMMARIZE,
             )
         }
     }
@@ -234,7 +235,11 @@ class LedgerViewModel(
         val current = _uiState.value
         val labelDraft = current.labelDraft.trim()
         if (labelDraft.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Label name cannot be empty.") }
+            _uiState.update { it.copy(errorMessage = "Tag name cannot be empty.") }
+            return
+        }
+        if (current.editingLabelId == null && current.labels.size >= MAX_TAGS) {
+            _uiState.update { it.copy(errorMessage = "You can save up to $MAX_TAGS tags.") }
             return
         }
 
@@ -255,7 +260,7 @@ class LedgerViewModel(
                 }
             }.onFailure { exception ->
                 _uiState.update {
-                    it.copy(errorMessage = exception.message ?: "Label save failed.")
+                    it.copy(errorMessage = exception.message ?: "Tag save failed.")
                 }
             }
         }
@@ -263,7 +268,7 @@ class LedgerViewModel(
 
     fun deleteEditingLabel() {
         val labelId = _uiState.value.editingLabelId ?: return
-        val labelName = _uiState.value.labels.firstOrNull { it.id == labelId }?.name ?: "Label"
+        val labelName = _uiState.value.labels.firstOrNull { it.id == labelId }?.name ?: "Tag"
         viewModelScope.launch {
             repository.deleteLabel(labelId)
             _uiState.update {
@@ -273,54 +278,6 @@ class LedgerViewModel(
                     infoMessage = "\"$labelName\" deleted.",
                 )
             }
-        }
-    }
-
-    fun updateSummaryModelPath(value: String) {
-        _uiState.update { it.copy(settings = it.settings.copy(summaryModelPath = value)) }
-    }
-
-    fun updateEmbeddingModelPath(value: String) {
-        _uiState.update { it.copy(settings = it.settings.copy(embeddingModelPath = value)) }
-    }
-
-    fun updateSummaryStartDate(value: String) {
-        _uiState.update { it.copy(settings = it.settings.copy(summaryStartDate = value)) }
-    }
-
-    fun updateMaxSourcesPerRollup(value: String) {
-        _uiState.update {
-            it.copy(settings = it.settings.copy(maxSourcesPerRollup = value.toIntOrNull() ?: it.settings.maxSourcesPerRollup))
-        }
-    }
-
-    fun updateEmbeddingDimensions(value: String) {
-        _uiState.update {
-            it.copy(settings = it.settings.copy(embeddingDimensions = value.toIntOrNull() ?: it.settings.embeddingDimensions))
-        }
-    }
-
-    fun updateSearchResultLimit(value: String) {
-        _uiState.update {
-            it.copy(settings = it.settings.copy(searchResultLimit = value.toIntOrNull() ?: it.settings.searchResultLimit))
-        }
-    }
-
-    fun updateMaxTokens(value: String) {
-        _uiState.update {
-            it.copy(settings = it.settings.copy(maxTokens = value.toIntOrNull() ?: it.settings.maxTokens))
-        }
-    }
-
-    fun updateTopK(value: String) {
-        _uiState.update {
-            it.copy(settings = it.settings.copy(topK = value.toIntOrNull() ?: it.settings.topK))
-        }
-    }
-
-    fun updateTemperature(value: String) {
-        _uiState.update {
-            it.copy(settings = it.settings.copy(temperature = value.toFloatOrNull() ?: it.settings.temperature))
         }
     }
 
@@ -339,34 +296,8 @@ class LedgerViewModel(
         _uiState.update {
             it.copy(
                 settings = normalized,
-                infoMessage = "Settings saved.",
+                infoMessage = "Summarize settings saved.",
             )
-        }
-    }
-
-    fun importModel(target: ModelImportTarget, uri: Uri) {
-        viewModelScope.launch {
-            try {
-                val importedPath = modelStore.importModel(uri, target)
-                val nextSettings = when (target) {
-                    ModelImportTarget.SUMMARY -> _uiState.value.settings.copy(summaryModelPath = importedPath)
-                    ModelImportTarget.EMBEDDING -> _uiState.value.settings.copy(embeddingModelPath = importedPath)
-                }.normalized()
-                settingsStore.save(nextSettings)
-                _uiState.update {
-                    it.copy(
-                        settings = nextSettings,
-                        infoMessage = when (target) {
-                            ModelImportTarget.SUMMARY -> "Summary model imported into app storage."
-                            ModelImportTarget.EMBEDDING -> "Embedding model imported into app storage."
-                        },
-                    )
-                }
-            } catch (exception: Exception) {
-                _uiState.update {
-                    it.copy(errorMessage = exception.message ?: "Model import failed.")
-                }
-            }
         }
     }
 
@@ -389,11 +320,25 @@ class LedgerViewModel(
         val current = _uiState.value
         val query = current.searchQuery.trim()
         if (query.isBlank()) {
-            _uiState.update { it.copy(searchRoute = emptyList(), searchResults = emptyList()) }
+            _uiState.update {
+                it.copy(
+                    searchRoute = emptyList(),
+                    searchResults = emptyList(),
+                    searchAnswer = null,
+                    searchAnswerNotice = null,
+                )
+            }
             return
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(isSearching = true, errorMessage = null) }
+            _uiState.update {
+                it.copy(
+                    isSearching = true,
+                    errorMessage = null,
+                    searchAnswer = null,
+                    searchAnswerNotice = null,
+                )
+            }
             try {
                 val response = coordinator.search(query, current.searchSelectedLabelIds)
                 _uiState.update {
@@ -401,6 +346,8 @@ class LedgerViewModel(
                         isSearching = false,
                         searchRoute = response.route,
                         searchResults = response.hits,
+                        searchAnswer = response.answer,
+                        searchAnswerNotice = response.answerNotice,
                         infoMessage = if (response.hits.isEmpty()) "No semantic matches found for that query." else null,
                     )
                 }
@@ -408,6 +355,8 @@ class LedgerViewModel(
                 _uiState.update {
                     it.copy(
                         isSearching = false,
+                        searchAnswer = null,
+                        searchAnswerNotice = null,
                         errorMessage = exception.message ?: "Search failed.",
                     )
                 }
