@@ -15,6 +15,9 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.YearMonth
 import kotlin.math.max
+import kotlin.math.min
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -31,14 +34,17 @@ class LocalAggregationCoordinator(
     private val answerEngine = LocalAnswerEngine(context)
     private val zoneId = ZoneId.systemDefault()
 
-    suspend fun runAggregation(rebuildFromStartDate: Boolean = false): String {
+    suspend fun runAggregation(
+        rebuildFromStartDate: Boolean = false,
+        onProgress: suspend (String) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
+        val runReferenceEpochMs = System.currentTimeMillis()
         val modelStatus = modelProvisioner.ensureInstalled()
         val settings = settingsStore.load().normalized()
         val notes = repository.allNotesAscending()
-        reindexNotes(notes, settings)
 
         if (notes.isEmpty()) {
-            return "No notes yet. Create Summary will begin after the first note."
+            return@withContext "No notes yet. Update will begin after the first note."
         }
 
         val configuredFloor = settings.summaryStartDate
@@ -49,65 +55,92 @@ class LocalAggregationCoordinator(
             repository.markDirtyFrom(configuredFloor)
         }
 
-        var dailySources = notes.map { note ->
-            SemanticDocument(
-                sourceId = "note:${note.id}",
-                title = note.title,
-                body = note.body,
-                noteIds = listOf(note.id),
-                createdAtEpochMs = note.createdAtEpochMs,
-            )
+        val checkpoints = RollupGranularity.entries.associateWith { granularity ->
+            repository.checkpoint(granularity)
         }
+        val dirtyFloor = checkpoints.values.mapNotNull(AggregationCheckpoint::dirtyFromEpochMs).minOrNull()
+        val noteReindexFloor = when {
+            rebuildFromStartDate -> configuredFloor ?: notes.first().createdAtEpochMs
+            dirtyFloor != null -> dirtyFloor
+            checkpoints.values.all { it.lastCompletedEndEpochMs == null } -> notes.first().createdAtEpochMs
+            else -> null
+        }
+        val notesToReindex = noteReindexFloor?.let { floor ->
+            notes.filter { note -> note.createdAtEpochMs >= floor }
+        }.orEmpty()
 
-        RollupGranularity.entries.forEach { granularity ->
-            val checkpoint = repository.checkpoint(granularity)
-            repository.updateCheckpoint(
-                checkpoint.copy(
-                    lastRunStartedEpochMs = System.currentTimeMillis(),
-                    lastError = null,
-                ),
-            )
-
-            val sourceFloor = checkpoint.dirtyFromEpochMs
-                ?: checkpoint.lastCompletedEndEpochMs
-                ?: dailySources.first().createdAtEpochMs
-            val effectiveFloor = configuredFloor?.let { max(it, sourceFloor) } ?: sourceFloor
-
-            try {
-                val lastProcessedEnd = processGranularity(
-                    granularity = granularity,
-                    sourceDocuments = dailySources,
-                    floorEpochMs = effectiveFloor,
-                    settings = settings,
-                )
-                val refreshedCheckpoint = repository.checkpoint(granularity)
-                repository.updateCheckpoint(
-                    refreshedCheckpoint.copy(
-                        dirtyFromEpochMs = null,
-                        lastCompletedEndEpochMs = lastProcessedEnd ?: refreshedCheckpoint.lastCompletedEndEpochMs,
-                        lastRunFinishedEpochMs = System.currentTimeMillis(),
-                        lastError = null,
-                    ),
-                )
-            } catch (exception: Exception) {
-                val refreshedCheckpoint = repository.checkpoint(granularity)
-                repository.updateCheckpoint(
-                    refreshedCheckpoint.copy(
-                        lastRunFinishedEpochMs = System.currentTimeMillis(),
-                        lastError = exception.message ?: "Aggregation failed.",
-                    ),
-                )
-                throw exception
+        embeddingEngine.openEmbedder(settings).use { embedder ->
+            if (notesToReindex.isNotEmpty()) {
+                onProgress("Reindexing ${notesToReindex.size} note(s)")
+                reindexNotes(notesToReindex, embedder)
             }
 
-            dailySources = repository.rollupsByGranularity(granularity).map { rollup ->
-                SemanticDocument(
-                    sourceId = rollup.id,
-                    title = rollup.title,
-                    body = rollup.overview,
-                    noteIds = rollup.noteIds,
-                    createdAtEpochMs = rollup.periodStartEpochMs,
-                )
+            summaryEngine.openSummarizer(settings).use { summarizer ->
+                var dailySources = notes.map { note ->
+                    SemanticDocument(
+                        sourceId = "note:${note.id}",
+                        title = note.title,
+                        body = note.body,
+                        noteIds = listOf(note.id),
+                        createdAtEpochMs = note.createdAtEpochMs,
+                    )
+                }
+
+                RollupGranularity.entries.forEach { granularity ->
+                    onProgress("Building ${granularity.displayLabel().lowercase()} summaries")
+                    val checkpoint = repository.checkpoint(granularity)
+                    repository.updateCheckpoint(
+                        checkpoint.copy(
+                            lastRunStartedEpochMs = runReferenceEpochMs,
+                            lastError = null,
+                        ),
+                    )
+
+                    val sourceFloor = checkpoint.dirtyFromEpochMs
+                        ?: checkpoint.lastCompletedEndEpochMs
+                        ?: dailySources.first().createdAtEpochMs
+                    val effectiveFloor = configuredFloor?.let { max(it, sourceFloor) } ?: sourceFloor
+
+                    try {
+                        val lastProcessedEnd = processGranularity(
+                            granularity = granularity,
+                            sourceDocuments = dailySources,
+                            floorEpochMs = effectiveFloor,
+                            maxSourcesPerRollup = settings.maxSourcesPerRollup,
+                            summarizer = summarizer,
+                            embedder = embedder,
+                            runReferenceEpochMs = runReferenceEpochMs,
+                        )
+                        val refreshedCheckpoint = repository.checkpoint(granularity)
+                        repository.updateCheckpoint(
+                            refreshedCheckpoint.copy(
+                                dirtyFromEpochMs = null,
+                                lastCompletedEndEpochMs = lastProcessedEnd ?: refreshedCheckpoint.lastCompletedEndEpochMs,
+                                lastRunFinishedEpochMs = System.currentTimeMillis(),
+                                lastError = null,
+                            ),
+                        )
+                    } catch (exception: Exception) {
+                        val refreshedCheckpoint = repository.checkpoint(granularity)
+                        repository.updateCheckpoint(
+                            refreshedCheckpoint.copy(
+                                lastRunFinishedEpochMs = System.currentTimeMillis(),
+                                lastError = exception.message ?: "Aggregation failed.",
+                            ),
+                        )
+                        throw exception
+                    }
+
+                    dailySources = repository.rollupsByGranularity(granularity).map { rollup ->
+                        SemanticDocument(
+                            sourceId = rollup.id,
+                            title = rollup.title,
+                            body = rollup.overview,
+                            noteIds = rollup.noteIds,
+                            createdAtEpochMs = rollup.periodStartEpochMs,
+                        )
+                    }
+                }
             }
         }
 
@@ -119,17 +152,17 @@ class LocalAggregationCoordinator(
                 add("Embedding model is not installed yet, so search index entries used hashed fallback vectors.")
             }
         }
-        return if (notices.isEmpty()) {
+        return@withContext if (notices.isEmpty()) {
             "Summaries and semantic search index refreshed."
         } else {
             "Summaries and semantic search index refreshed. ${notices.joinToString(" ")}"
         }
     }
 
-    suspend fun search(query: String, labelIds: Set<Long> = emptySet()): SemanticSearchResponse {
+    suspend fun search(query: String, labelIds: Set<Long> = emptySet()): SemanticSearchResponse = withContext(Dispatchers.IO) {
         val normalized = query.trim()
         if (normalized.isBlank()) {
-            return SemanticSearchResponse(route = emptyList(), hits = emptyList())
+            return@withContext SemanticSearchResponse(route = emptyList(), hits = emptyList())
         }
 
         val modelStatus = modelProvisioner.ensureInstalled()
@@ -137,7 +170,7 @@ class LocalAggregationCoordinator(
         val queryVector = embeddingEngine.embed(normalized, settings)
         val decodedEntries = repository.allSemanticEntries().mapNotNull(::decodeEntry)
         if (decodedEntries.isEmpty()) {
-            return SemanticSearchResponse(route = emptyList(), hits = emptyList())
+            return@withContext SemanticSearchResponse(route = emptyList(), hits = emptyList())
         }
 
         val noteLabelScope = if (labelIds.isEmpty()) {
@@ -146,7 +179,7 @@ class LocalAggregationCoordinator(
             repository.noteIdsWithAnyLabels(labelIds)
         }
         if (noteLabelScope != null && noteLabelScope.isEmpty()) {
-            return SemanticSearchResponse(route = emptyList(), hits = emptyList())
+            return@withContext SemanticSearchResponse(route = emptyList(), hits = emptyList())
         }
 
         val noteEntries = decodedEntries.filter { it.entry.kind == "note" && it.entry.noteId != null }
@@ -277,7 +310,7 @@ class LocalAggregationCoordinator(
             }
         }
 
-        return SemanticSearchResponse(
+        return@withContext SemanticSearchResponse(
             route = route,
             hits = hits,
             answer = answer,
@@ -285,9 +318,12 @@ class LocalAggregationCoordinator(
         )
     }
 
-    private suspend fun reindexNotes(notes: List<NoteEntity>, settings: LocalAiSettings) {
+    private suspend fun reindexNotes(
+        notes: List<NoteEntity>,
+        embedder: LocalEmbeddingEngine.PreparedEmbedder,
+    ) {
         notes.forEach { note ->
-            val embedding = embeddingEngine.embed("${note.title}\n${note.body}", settings)
+            val embedding = embedder.embed("${note.title}\n${note.body}")
             repository.replaceSemanticEntry(
                 SemanticEntryEntity(
                     entryId = "note:${note.id}",
@@ -309,7 +345,10 @@ class LocalAggregationCoordinator(
         granularity: RollupGranularity,
         sourceDocuments: List<SemanticDocument>,
         floorEpochMs: Long,
-        settings: LocalAiSettings,
+        maxSourcesPerRollup: Int,
+        summarizer: LocalSummaryEngine.PreparedSummarizer,
+        embedder: LocalEmbeddingEngine.PreparedEmbedder,
+        runReferenceEpochMs: Long,
     ): Long? {
         val floorStart = startOfPeriod(floorEpochMs, granularity)
         val existingBucketStarts = repository.rollupsByGranularity(granularity)
@@ -335,7 +374,7 @@ class LocalAggregationCoordinator(
                     sourceStart == bucketStart
                 }
                 .sortedByDescending(SemanticDocument::createdAtEpochMs)
-            val docsForSummary = bucketDocuments.take(settings.maxSourcesPerRollup)
+            val docsForSummary = bucketDocuments.take(maxSourcesPerRollup)
 
             val rollupId = "${granularity.name.lowercase()}:$bucketStart"
             if (docsForSummary.isEmpty()) {
@@ -343,12 +382,11 @@ class LocalAggregationCoordinator(
                 return@forEach
             }
 
-            val insight = summaryEngine.summarize(
+            val insight = summarizer.summarize(
                 documents = docsForSummary,
                 granularity = granularity,
                 periodStartEpochMs = bucketStart,
                 periodEndEpochMs = bucketEnd,
-                settings = settings,
             )
             val noteIds = bucketDocuments.flatMap(SemanticDocument::noteIds).distinct()
 
@@ -362,9 +400,8 @@ class LocalAggregationCoordinator(
                 noteIds = noteIds,
             )
 
-            val rollupEmbedding = embeddingEngine.embed(
+            val rollupEmbedding = embedder.embed(
                 "${insight.title}\n${insight.overview}",
-                settings,
             )
             repository.replaceSemanticEntry(
                 SemanticEntryEntity(
@@ -380,7 +417,7 @@ class LocalAggregationCoordinator(
                     updatedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
-            lastProcessedEnd = bucketEnd
+            lastProcessedEnd = min(bucketEnd, runReferenceEpochMs)
         }
         return lastProcessedEnd
     }
@@ -525,6 +562,10 @@ class LocalAggregationCoordinator(
         }
         return sum
     }
+}
+
+private fun RollupGranularity.displayLabel(): String {
+    return name.lowercase().replaceFirstChar { it.uppercase() }
 }
 
 private data class DecodedEntry(

@@ -20,6 +20,27 @@ class LocalSummaryEngine(
         isLenient = true
     },
 ) {
+    fun openSummarizer(settings: LocalAiSettings): PreparedSummarizer {
+        val normalized = settings.normalized()
+        val model = LocalModelLocator.resolveSummaryModel(context, normalized)
+        if (model != null) {
+            runCatching {
+                return ModelSummarizer(
+                    inference = LlmInference.createFromOptions(
+                        context,
+                        LlmInference.LlmInferenceOptions.builder()
+                            .setModelPath(model.path)
+                            .setMaxTokens(normalized.maxTokens)
+                            .setMaxTopK(normalized.topK)
+                            .build(),
+                    ),
+                    model = model,
+                )
+            }
+        }
+        return HeuristicSummarizer()
+    }
+
     suspend fun summarize(
         documents: List<SemanticDocument>,
         granularity: RollupGranularity,
@@ -27,42 +48,41 @@ class LocalSummaryEngine(
         periodEndEpochMs: Long,
         settings: LocalAiSettings,
     ): AggregateInsight {
-        val normalized = settings.normalized()
-        val model = LocalModelLocator.resolveSummaryModel(context, normalized)
-        if (model != null) {
-            runCatching {
-                return summarizeWithModel(
-                    documents = documents,
-                    granularity = granularity,
-                    periodStartEpochMs = periodStartEpochMs,
-                    periodEndEpochMs = periodEndEpochMs,
-                    settings = normalized,
-                    model = model,
-                )
-            }
+        return openSummarizer(settings).use { summarizer ->
+            summarizer.summarize(
+                documents = documents,
+                granularity = granularity,
+                periodStartEpochMs = periodStartEpochMs,
+                periodEndEpochMs = periodEndEpochMs,
+            )
         }
-        return summarizeHeuristically(documents, granularity, periodStartEpochMs, periodEndEpochMs)
     }
 
-    private fun summarizeWithModel(
-        documents: List<SemanticDocument>,
-        granularity: RollupGranularity,
-        periodStartEpochMs: Long,
-        periodEndEpochMs: Long,
-        settings: LocalAiSettings,
-        model: ResolvedLocalModel,
-    ): AggregateInsight {
-        val options = LlmInference.LlmInferenceOptions.builder()
-            .setModelPath(model.path)
-            .setMaxTokens(settings.maxTokens)
-            .setMaxTopK(settings.topK)
-            .build()
+    interface PreparedSummarizer : AutoCloseable {
+        fun summarize(
+            documents: List<SemanticDocument>,
+            granularity: RollupGranularity,
+            periodStartEpochMs: Long,
+            periodEndEpochMs: Long,
+        ): AggregateInsight
 
-        val prompt = buildPrompt(documents, granularity, periodStartEpochMs, periodEndEpochMs)
-        return LlmInference.createFromOptions(context, options).use { inference ->
+        override fun close() = Unit
+    }
+
+    private inner class ModelSummarizer(
+        private val inference: LlmInference,
+        private val model: ResolvedLocalModel,
+    ) : PreparedSummarizer {
+        override fun summarize(
+            documents: List<SemanticDocument>,
+            granularity: RollupGranularity,
+            periodStartEpochMs: Long,
+            periodEndEpochMs: Long,
+        ): AggregateInsight {
+            val prompt = buildPrompt(documents, granularity, periodStartEpochMs, periodEndEpochMs)
             val rawResponse = inference.generateResponse(prompt)
             val parsed = json.decodeFromString<ModelInsightPayload>(extractJsonObject(rawResponse))
-            AggregateInsight(
+            return AggregateInsight(
                 modelLabel = model.label,
                 title = parsed.title.ifBlank { defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs) },
                 overview = parsed.overview.trim(),
@@ -70,38 +90,44 @@ class LocalSummaryEngine(
                 themes = emptyList(),
             )
         }
+
+        override fun close() {
+            inference.close()
+        }
     }
 
-    private fun summarizeHeuristically(
-        documents: List<SemanticDocument>,
-        granularity: RollupGranularity,
-        periodStartEpochMs: Long,
-        periodEndEpochMs: Long,
-    ): AggregateInsight {
-        val rangeLabel = formatDateRange(periodStartEpochMs, periodEndEpochMs)
-        val overview = buildString {
-            append("Summary for $rangeLabel based on ${documents.size} source item(s).")
-            val sampleLines = documents
-                .sortedByDescending(SemanticDocument::createdAtEpochMs)
-                .take(3)
-                .mapNotNull { document ->
-                    document.body.lineSequence().firstOrNull()?.trim()?.takeIf(String::isNotBlank)?.let { line ->
-                        "${document.title.ifBlank { "Untitled" }}: $line"
+    private inner class HeuristicSummarizer : PreparedSummarizer {
+        override fun summarize(
+            documents: List<SemanticDocument>,
+            granularity: RollupGranularity,
+            periodStartEpochMs: Long,
+            periodEndEpochMs: Long,
+        ): AggregateInsight {
+            val rangeLabel = formatDateRange(periodStartEpochMs, periodEndEpochMs)
+            val overview = buildString {
+                append("Summary for $rangeLabel based on ${documents.size} source item(s).")
+                val sampleLines = documents
+                    .sortedByDescending(SemanticDocument::createdAtEpochMs)
+                    .take(3)
+                    .mapNotNull { document ->
+                        document.body.lineSequence().firstOrNull()?.trim()?.takeIf(String::isNotBlank)?.let { line ->
+                            "${document.title.ifBlank { "Untitled" }}: $line"
+                        }
                     }
+                if (sampleLines.isNotEmpty()) {
+                    append(' ')
+                    append(sampleLines.joinToString(" "))
                 }
-            if (sampleLines.isNotEmpty()) {
-                append(' ')
-                append(sampleLines.joinToString(" "))
             }
-        }
 
-        return AggregateInsight(
-            modelLabel = "Built-in local summarizer (fallback)",
-            title = defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs),
-            overview = overview,
-            highlights = emptyList(),
-            themes = emptyList(),
-        )
+            return AggregateInsight(
+                modelLabel = "Built-in local summarizer (fallback)",
+                title = defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs),
+                overview = overview,
+                highlights = emptyList(),
+                themes = emptyList(),
+            )
+        }
     }
 
     private fun buildPrompt(

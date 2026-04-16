@@ -1,5 +1,7 @@
 package com.voiceledger.lite.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -70,6 +72,7 @@ import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
 import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -80,6 +83,16 @@ fun LedgerMiniApp(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        uri?.let(viewModel::exportCorpus)
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri?.let(viewModel::importCorpus)
+    }
 
     state.infoMessage?.let { message ->
         LaunchedEffect(message) {
@@ -181,6 +194,12 @@ fun LedgerMiniApp(
                 onRefresh = { viewModel.refreshInsights(false) },
                 onRebuild = { viewModel.refreshInsights(true) },
                 onRetryModelProvisioning = viewModel::retryModelProvisioning,
+                onExportCorpus = {
+                    exportLauncher.launch("voice-ledger-export-${LocalDate.now()}.json")
+                },
+                onImportCorpus = {
+                    importLauncher.launch(arrayOf("application/json", "text/plain"))
+                },
                 onSave = viewModel::saveSettings,
             )
         }
@@ -633,6 +652,8 @@ private fun SummarizeScreen(
     onRefresh: () -> Unit,
     onRebuild: () -> Unit,
     onRetryModelProvisioning: () -> Unit,
+    onExportCorpus: () -> Unit,
+    onImportCorpus: () -> Unit,
     onSave: () -> Unit,
 ) {
     LazyColumn(
@@ -656,7 +677,7 @@ private fun SummarizeScreen(
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(onClick = onRefresh, enabled = !state.isRefreshingInsights) {
-                            if (state.isRefreshingInsights) {
+                            if (state.activeInsightRefreshMode == InsightRefreshMode.UPDATE) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp,
@@ -666,8 +687,22 @@ private fun SummarizeScreen(
                             Text("Update")
                         }
                         OutlinedButton(onClick = onRebuild, enabled = !state.isRefreshingInsights) {
+                            if (state.activeInsightRefreshMode == InsightRefreshMode.REBUILD) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
                             Text("Rebuild")
                         }
+                    }
+                    if (state.isRefreshingInsights) {
+                        Text(
+                            "The summary job is running through Android background work. You can leave the app and come back.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -680,6 +715,51 @@ private fun SummarizeScreen(
         }
         item {
             StatsRow(state.localStats)
+        }
+        item {
+            ElevatedCard {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Data", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "Export the base notes with their original dates and tags, or import a JSON corpus. Import matches existing tags by name, creates missing tags up to the global limit, and skips exact duplicate notes.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(
+                            onClick = onExportCorpus,
+                            enabled = !state.isTransferringCorpus,
+                        ) {
+                            Text("Export notes")
+                        }
+                        OutlinedButton(
+                            onClick = onImportCorpus,
+                            enabled = !state.isTransferringCorpus,
+                        ) {
+                            Text("Import notes")
+                        }
+                    }
+                    if (state.isTransferringCorpus) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Text(
+                                "Processing corpus file.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
         }
         if (state.checkpoints.isNotEmpty()) {
             item {
@@ -945,6 +1025,11 @@ private fun StatsTile(label: String, value: String) {
 
 @Composable
 private fun CheckpointCard(checkpoint: AggregationCheckpoint) {
+    val lastRunLabel = when {
+        checkpoint.lastRunFinishedEpochMs != null -> formatTimestamp(checkpoint.lastRunFinishedEpochMs)
+        checkpoint.lastRunStartedEpochMs != null -> "${formatTimestamp(checkpoint.lastRunStartedEpochMs)} (running)"
+        else -> "Not yet"
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -956,7 +1041,11 @@ private fun CheckpointCard(checkpoint: AggregationCheckpoint) {
         ) {
             Text(checkpoint.granularity.name.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleMedium)
             Text(
-                "Last completed: ${checkpoint.lastCompletedEndEpochMs?.let(::formatTimestamp) ?: "Not yet"}",
+                "Last run: $lastRunLabel",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Coverage through: ${checkpoint.lastCompletedEndEpochMs?.let(::formatTimestamp) ?: "Not yet"}",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(

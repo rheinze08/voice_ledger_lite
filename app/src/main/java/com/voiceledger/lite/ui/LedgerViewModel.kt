@@ -1,6 +1,7 @@
 package com.voiceledger.lite.ui
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voiceledger.lite.data.LabelEntity
@@ -24,18 +25,25 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class AppTab {
     NOTES,
     COMPOSE,
     INSIGHTS,
     SUMMARIZE,
+}
+
+enum class InsightRefreshMode {
+    UPDATE,
+    REBUILD,
 }
 
 const val MAX_TAGS = 5
@@ -65,7 +73,9 @@ data class LedgerUiState(
     val searchAnswerNotice: String? = null,
     val isInitialSetupComplete: Boolean = false,
     val isProvisioningModels: Boolean = true,
+    val isTransferringCorpus: Boolean = false,
     val isRefreshingInsights: Boolean = false,
+    val activeInsightRefreshMode: InsightRefreshMode? = null,
     val isSearching: Boolean = false,
     val infoMessage: String? = null,
     val errorMessage: String? = null,
@@ -79,6 +89,8 @@ class LedgerViewModel(
 ) : ViewModel() {
     private val modelProvisioner = LocalModelProvisioner(appContext, settingsStore)
     private var showProvisioningSuccessMessage = false
+    private var hasObservedAggregationWork = false
+    private var lastHandledAggregationTerminalId: String? = null
     private val _uiState = MutableStateFlow(
         LedgerUiState(
             settings = settingsStore.load(),
@@ -90,6 +102,9 @@ class LedgerViewModel(
     init {
         viewModelScope.launch {
             observeModelProvisioning()
+        }
+        viewModelScope.launch {
+            observeAggregationWork()
         }
         viewModelScope.launch {
             syncModelProvisioningStatus()
@@ -349,6 +364,74 @@ class LedgerViewModel(
         }
     }
 
+    fun exportCorpus(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTransferringCorpus = true, errorMessage = null) }
+            runCatching {
+                val payload = repository.exportBaseDocumentsJson()
+                withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+                        writer.write(payload)
+                    } ?: error("Could not open export destination.")
+                }
+            }.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        isTransferringCorpus = false,
+                        infoMessage = "Exported notes, dates, and tags.",
+                    )
+                }
+            }.onFailure { exception ->
+                _uiState.update {
+                    it.copy(
+                        isTransferringCorpus = false,
+                        errorMessage = exception.message ?: "Export failed.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun importCorpus(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTransferringCorpus = true, errorMessage = null) }
+            runCatching {
+                val rawJson = withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                        reader.readText()
+                    } ?: error("Could not open import file.")
+                }
+                repository.importBaseDocumentsJson(rawJson, MAX_TAGS)
+            }.onSuccess { result ->
+                _uiState.update {
+                    it.copy(
+                        isTransferringCorpus = false,
+                        infoMessage = buildString {
+                            append("Imported ${result.importedNotes} note")
+                            if (result.importedNotes != 1) append('s')
+                            if (result.skippedNotes > 0) {
+                                append(", skipped ${result.skippedNotes} duplicate")
+                                if (result.skippedNotes != 1) append('s')
+                            }
+                            if (result.createdTags > 0) {
+                                append(", created ${result.createdTags} tag")
+                                if (result.createdTags != 1) append('s')
+                            }
+                            append('.')
+                        },
+                    )
+                }
+            }.onFailure { exception ->
+                _uiState.update {
+                    it.copy(
+                        isTransferringCorpus = false,
+                        errorMessage = exception.message ?: "Import failed.",
+                    )
+                }
+            }
+        }
+    }
+
     fun updateSearchQuery(value: String) {
         _uiState.update { it.copy(searchQuery = value) }
     }
@@ -423,33 +506,14 @@ class LedgerViewModel(
         if (_uiState.value.isRefreshingInsights) {
             return
         }
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isRefreshingInsights = true,
-                    errorMessage = null,
-                )
-            }
-            try {
-                val message = coordinator.runAggregation(rebuildFromStartDate)
-                val modelStatus = modelProvisioner.currentStatus()
-                _uiState.update {
-                    it.copy(
-                        settings = settingsStore.load(),
-                        modelProvisioning = modelStatus,
-                        isRefreshingInsights = false,
-                        infoMessage = message,
-                    )
-                }
-            } catch (exception: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isRefreshingInsights = false,
-                        errorMessage = exception.message ?: "Local aggregation failed.",
-                    )
-                }
-            }
+        _uiState.update {
+            it.copy(
+                isRefreshingInsights = true,
+                activeInsightRefreshMode = if (rebuildFromStartDate) InsightRefreshMode.REBUILD else InsightRefreshMode.UPDATE,
+                errorMessage = null,
+            )
         }
+        AggregationScheduler.enqueueImmediate(appContext, rebuildFromStartDate)
     }
 
     fun clearInfoMessage() {
@@ -511,6 +575,50 @@ class LedgerViewModel(
                     },
                 )
             }
+        }
+    }
+
+    private suspend fun observeAggregationWork() {
+        AggregationScheduler.immediateWorkInfosFlow(appContext).collect { workInfos ->
+            val isActive = AggregationScheduler.isImmediateActive(workInfos)
+            val isRebuild = AggregationScheduler.immediateWorkIsRebuild(workInfos)
+            val terminalResult = AggregationScheduler.immediateTerminalResult(workInfos)
+            val shouldHandleTerminal = hasObservedAggregationWork &&
+                terminalResult != null &&
+                terminalResult.workId != lastHandledAggregationTerminalId
+            if (shouldHandleTerminal) {
+                lastHandledAggregationTerminalId = terminalResult?.workId
+            }
+            val modelStatus = if (shouldHandleTerminal) {
+                modelProvisioner.currentStatus()
+            } else {
+                null
+            }
+            _uiState.update { state ->
+                state.copy(
+                    settings = if (shouldHandleTerminal) settingsStore.load() else state.settings,
+                    modelProvisioning = modelStatus ?: state.modelProvisioning,
+                    isRefreshingInsights = isActive,
+                    activeInsightRefreshMode = when {
+                        isActive && isRebuild -> InsightRefreshMode.REBUILD
+                        isActive -> InsightRefreshMode.UPDATE
+                        else -> null
+                    },
+                    infoMessage = when {
+                        shouldHandleTerminal && terminalResult?.state == androidx.work.WorkInfo.State.SUCCEEDED ->
+                            terminalResult.message ?: "Summaries and semantic search index refreshed."
+                        else -> state.infoMessage
+                    },
+                    errorMessage = when {
+                        shouldHandleTerminal &&
+                            terminalResult?.state != null &&
+                            terminalResult.state != androidx.work.WorkInfo.State.SUCCEEDED ->
+                            terminalResult.message ?: "Local aggregation failed."
+                        else -> state.errorMessage
+                    },
+                )
+            }
+            hasObservedAggregationWork = true
         }
     }
 }
