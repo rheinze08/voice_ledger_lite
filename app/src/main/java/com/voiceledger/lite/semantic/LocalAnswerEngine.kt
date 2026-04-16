@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.voiceledger.lite.semantic
 
 import android.content.Context
