@@ -2,9 +2,7 @@ package com.voiceledger.lite.semantic
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
@@ -61,7 +59,9 @@ class AggregationWorker(
                 }
             }.getOrElse { exception ->
                 if (exception is CancellationException) throw exception
-                val message = exception.message ?: "Summary rebuild failed."
+                val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
+                if (cause is CancellationException) throw cause
+                val message = cause.message ?: exception.message ?: "Summary rebuild failed."
                 if (isManualTrigger) {
                     Result.failure(AggregationScheduler.failureData(message, rebuildFromStartDate))
                 } else {
@@ -73,27 +73,18 @@ class AggregationWorker(
 
     private fun createForegroundInfo(message: String, rebuildFromStartDate: Boolean): ForegroundInfo {
         createNotificationChannelIfNeeded()
-        val launchIntent = applicationContext.packageManager
-            .getLaunchIntentForPackage(applicationContext.packageName)
-            ?.apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP }
-        val pendingIntent = launchIntent?.let {
-            PendingIntent.getActivity(
-                applicationContext,
-                0,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-        }
         val title = if (rebuildFromStartDate) {
             "Rebuilding Voice Ledger summaries"
         } else {
             "Updating Voice Ledger summaries"
         }
+        // PendingIntent is intentionally omitted: ForegroundInfo is marshalled to bytes when
+        // crossing from the :aggregation process to the main process, and Parcel.marshall()
+        // rejects Parcels that contain Binder objects (which PendingIntent holds internally).
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
             .setContentText(message)
-            .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
