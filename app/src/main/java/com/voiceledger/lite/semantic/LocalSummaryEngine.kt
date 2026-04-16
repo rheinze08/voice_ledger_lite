@@ -23,22 +23,21 @@ class LocalSummaryEngine(
     fun openSummarizer(settings: LocalAiSettings): PreparedSummarizer {
         val normalized = settings.normalized()
         val model = LocalModelLocator.resolveSummaryModel(context, normalized)
-        if (model != null) {
-            runCatching {
-                return ModelSummarizer(
-                    inference = LlmInference.createFromOptions(
-                        context,
-                        LlmInference.LlmInferenceOptions.builder()
-                            .setModelPath(model.path)
-                            .setMaxTokens(normalized.maxTokens)
-                            .setMaxTopK(normalized.topK)
-                            .build(),
-                    ),
-                    model = model,
-                )
-            }
+        if (model == null) {
+            return HeuristicSummarizer()
         }
-        return HeuristicSummarizer()
+        val inference = LlmInference.createFromOptions(
+            context,
+            LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(model.path)
+                .setMaxTokens(normalized.maxTokens)
+                .setMaxTopK(normalized.topK)
+                .build(),
+        )
+        return ModelSummarizer(
+            inference = inference,
+            model = model,
+        )
     }
 
     suspend fun summarize(
@@ -137,24 +136,7 @@ class LocalSummaryEngine(
         periodEndEpochMs: Long,
     ): String {
         val formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
-        val sourceBlock = documents.joinToString("\n\n") { document ->
-            buildString {
-                append("source_id=")
-                append(document.sourceId)
-                append('\n')
-                append("created_at=")
-                append(formatter.format(Instant.ofEpochMilli(document.createdAtEpochMs)))
-                append('\n')
-                append("note_ids=")
-                append(document.noteIds.joinToString(","))
-                append('\n')
-                append("title=")
-                append(document.title)
-                append('\n')
-                append("body=")
-                append(document.body.take(700))
-            }
-        }
+        val sourceBlock = buildSourceBlock(documents, granularity, formatter)
 
         return """
             Summarize and compress the following ${granularity.name.lowercase()} journal material from ${formatDateRange(periodStartEpochMs, periodEndEpochMs)} into one summary document.
@@ -175,6 +157,48 @@ class LocalSummaryEngine(
             Sources:
             $sourceBlock
         """.trimIndent()
+    }
+
+    private fun buildSourceBlock(
+        documents: List<SemanticDocument>,
+        granularity: RollupGranularity,
+        formatter: DateTimeFormatter,
+    ): String {
+        val totalBodyBudget = totalBodyBudget(granularity)
+        val perDocumentBudget = (totalBodyBudget / documents.size.coerceAtLeast(1))
+            .coerceIn(MIN_SOURCE_BODY_CHARS, MAX_SOURCE_BODY_CHARS)
+        var remainingBudget = totalBodyBudget
+
+        return documents.joinToString("\n\n") { document ->
+            val bodyLimit = minOf(perDocumentBudget, remainingBudget).coerceAtLeast(MIN_SOURCE_BODY_CHARS)
+            val body = document.body.take(bodyLimit)
+            remainingBudget = (remainingBudget - body.length).coerceAtLeast(0)
+            buildString {
+                append("source_id=")
+                append(document.sourceId)
+                append('\n')
+                append("created_at=")
+                append(formatter.format(Instant.ofEpochMilli(document.createdAtEpochMs)))
+                append('\n')
+                append("note_ids=")
+                append(document.noteIds.joinToString(","))
+                append('\n')
+                append("title=")
+                append(document.title)
+                append('\n')
+                append("body=")
+                append(body)
+            }
+        }
+    }
+
+    private fun totalBodyBudget(granularity: RollupGranularity): Int {
+        return when (granularity) {
+            RollupGranularity.DAILY -> 18_000
+            RollupGranularity.WEEKLY -> 24_000
+            RollupGranularity.MONTHLY -> 28_000
+            RollupGranularity.YEARLY -> 32_000
+        }
     }
 
     private fun defaultTitle(
@@ -204,4 +228,9 @@ class LocalSummaryEngine(
         val title: String = "",
         val overview: String,
     )
+
+    companion object {
+        private const val MIN_SOURCE_BODY_CHARS = 1_500
+        private const val MAX_SOURCE_BODY_CHARS = 6_000
+    }
 }

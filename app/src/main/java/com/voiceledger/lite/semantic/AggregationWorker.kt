@@ -29,7 +29,8 @@ class AggregationWorker(
         val isManualTrigger = AggregationScheduler.isManualTrigger(inputData)
         val rebuildFromStartDate = AggregationScheduler.isRebuildFromStart(inputData)
 
-        if (!isManualTrigger && !settingsStore.load().backgroundProcessingEnabled) {
+        val settings = settingsStore.load()
+        if (!isManualTrigger && !settings.backgroundProcessingEnabled) {
             return@withContext Result.success()
         }
 
@@ -55,6 +56,7 @@ class AggregationWorker(
                 if (isManualTrigger) {
                     Result.success(AggregationScheduler.successData(message, rebuildFromStartDate))
                 } else {
+                    AggregationScheduler.scheduleNextFromWorker(applicationContext, settingsStore.load())
                     Result.success()
                 }
             }.getOrElse { exception ->

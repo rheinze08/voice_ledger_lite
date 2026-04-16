@@ -3,19 +3,22 @@ package com.voiceledger.lite.semantic
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.Data
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import java.util.concurrent.TimeUnit
+import com.voiceledger.lite.data.LocalAiSettings
+import com.voiceledger.lite.data.normalizeBackgroundProcessingTime
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.LocalTime
 import kotlinx.coroutines.flow.Flow
 
 object AggregationScheduler {
     private const val PERIODIC_WORK_NAME = "voice-ledger-periodic-aggregation"
+    private const val SCHEDULED_WORK_NAME = "voice-ledger-scheduled-aggregation"
     private const val IMMEDIATE_WORK_NAME = "voice-ledger-immediate-aggregation"
     private const val KEY_MANUAL_TRIGGER = "manual_trigger"
     private const val KEY_REBUILD_FROM_START = "rebuild_from_start"
@@ -23,18 +26,42 @@ object AggregationScheduler {
     private const val KEY_RESULT_MESSAGE = "result_message"
     private const val KEY_ERROR_MESSAGE = "error_message"
 
-    fun schedulePeriodic(context: Context) {
+    fun scheduleDaily(context: Context, settings: LocalAiSettings) {
         val constraints = Constraints.Builder()
             .setRequiresBatteryNotLow(true)
-            .setRequiresCharging(true)
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
-        val request = PeriodicWorkRequestBuilder<AggregationWorker>(24, TimeUnit.HOURS)
+        val request = OneTimeWorkRequestBuilder<AggregationWorker>()
+            .setInputData(inputData(manualTrigger = false, rebuildFromStartDate = false))
             .setConstraints(constraints)
+            .setInitialDelay(nextScheduledDelay(settings.backgroundProcessingTime))
             .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            PERIODIC_WORK_NAME,
-            ExistingPeriodicWorkPolicy.UPDATE,
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelUniqueWork(PERIODIC_WORK_NAME)
+        workManager.enqueueUniqueWork(
+            SCHEDULED_WORK_NAME,
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+    }
+
+    fun scheduleNextFromWorker(context: Context, settings: LocalAiSettings) {
+        if (!settings.backgroundProcessingEnabled) {
+            cancelScheduled(context)
+            return
+        }
+        val constraints = Constraints.Builder()
+            .setRequiresBatteryNotLow(true)
+            .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+            .build()
+        val request = OneTimeWorkRequestBuilder<AggregationWorker>()
+            .setInputData(inputData(manualTrigger = false, rebuildFromStartDate = false))
+            .setConstraints(constraints)
+            .setInitialDelay(nextScheduledDelay(settings.backgroundProcessingTime))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            SCHEDULED_WORK_NAME,
+            ExistingWorkPolicy.REPLACE,
             request,
         )
     }
@@ -98,8 +125,10 @@ object AggregationScheduler {
         )
     }
 
-    fun cancelPeriodic(context: Context) {
-        WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK_NAME)
+    fun cancelScheduled(context: Context) {
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelUniqueWork(PERIODIC_WORK_NAME)
+        workManager.cancelUniqueWork(SCHEDULED_WORK_NAME)
     }
 
     fun inputData(manualTrigger: Boolean, rebuildFromStartDate: Boolean): Data {
@@ -141,6 +170,16 @@ object AggregationScheduler {
                     .thenByDescending { it.runAttemptCount }
             )
             .firstOrNull()
+    }
+
+    private fun nextScheduledDelay(timeString: String): Duration {
+        val now = LocalDateTime.now()
+        val scheduledTime = LocalTime.parse(normalizeBackgroundProcessingTime(timeString))
+        var nextRun = now.toLocalDate().atTime(scheduledTime)
+        if (!nextRun.isAfter(now)) {
+            nextRun = nextRun.plusDays(1)
+        }
+        return Duration.between(now, nextRun)
     }
 }
 

@@ -11,6 +11,7 @@ import com.voiceledger.lite.data.LocalStats
 import com.voiceledger.lite.data.NoteWithLabels
 import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.data.SettingsStore
+import com.voiceledger.lite.data.isValidBackgroundProcessingTime
 import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.AggregationScheduler
 import com.voiceledger.lite.semantic.GeneratedAnswer
@@ -342,6 +343,10 @@ class LedgerViewModel(
         _uiState.update { it.copy(settings = it.settings.copy(backgroundProcessingEnabled = enabled)) }
     }
 
+    fun updateBackgroundProcessingTime(value: String) {
+        _uiState.update { it.copy(settings = it.settings.copy(backgroundProcessingTime = value)) }
+    }
+
     fun retryModelProvisioning() {
         showProvisioningSuccessMessage = true
         ModelProvisioningScheduler.retry(appContext)
@@ -349,17 +354,28 @@ class LedgerViewModel(
     }
 
     fun saveSettings() {
-        val normalized = _uiState.value.settings.normalized()
+        val pending = _uiState.value.settings
+        if (!isValidBackgroundProcessingTime(pending.backgroundProcessingTime)) {
+            _uiState.update {
+                it.copy(errorMessage = "Scheduled time must use HH:MM in 24-hour time.")
+            }
+            return
+        }
+        val normalized = pending.normalized()
         settingsStore.save(normalized)
         if (normalized.backgroundProcessingEnabled) {
-            AggregationScheduler.schedulePeriodic(appContext)
+            AggregationScheduler.scheduleDaily(appContext, normalized)
         } else {
-            AggregationScheduler.cancelPeriodic(appContext)
+            AggregationScheduler.cancelScheduled(appContext)
         }
         _uiState.update {
             it.copy(
                 settings = normalized,
-                infoMessage = "Summarize settings saved.",
+                infoMessage = if (normalized.backgroundProcessingEnabled) {
+                    "Summarize settings saved. Daily update scheduled for ${normalized.backgroundProcessingTime}."
+                } else {
+                    "Summarize settings saved."
+                },
             )
         }
     }

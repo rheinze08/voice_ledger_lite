@@ -191,6 +191,7 @@ fun LedgerMiniApp(
                 onSaveLabel = viewModel::saveLabel,
                 onDeleteLabel = viewModel::deleteEditingLabel,
                 onBackgroundProcessingChange = viewModel::updateBackgroundProcessing,
+                onBackgroundProcessingTimeChange = viewModel::updateBackgroundProcessingTime,
                 onRefresh = { viewModel.refreshInsights(false) },
                 onRebuild = { viewModel.refreshInsights(true) },
                 onRetryModelProvisioning = viewModel::retryModelProvisioning,
@@ -649,6 +650,7 @@ private fun SummarizeScreen(
     onSaveLabel: () -> Unit,
     onDeleteLabel: () -> Unit,
     onBackgroundProcessingChange: (Boolean) -> Unit,
+    onBackgroundProcessingTimeChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onRebuild: () -> Unit,
     onRetryModelProvisioning: () -> Unit,
@@ -858,7 +860,7 @@ private fun SummarizeScreen(
         }
         item {
             Text(
-                        "Background processing keeps summaries and semantic search refreshed when the device is charging.",
+                        "Background processing can run one daily update around a time you choose.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -872,7 +874,7 @@ private fun SummarizeScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Background processing", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Runs daily when charging so rollups and vector search can catch up off-hours.",
+                        "Runs one daily update around your selected local time. Android can still shift the exact minute slightly.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -882,6 +884,19 @@ private fun SummarizeScreen(
                     onCheckedChange = onBackgroundProcessingChange,
                 )
             }
+        }
+        item {
+            OutlinedTextField(
+                value = state.settings.backgroundProcessingTime,
+                onValueChange = onBackgroundProcessingTimeChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Daily update time") },
+                placeholder = { Text("HH:MM") },
+                supportingText = {
+                    Text("24-hour local time, for example 02:00 or 21:30.")
+                },
+                singleLine = true,
+            )
         }
         item {
             Button(onClick = onSave) {
