@@ -16,6 +16,7 @@ import java.time.ZoneId
 import java.time.YearMonth
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
@@ -98,7 +99,19 @@ class LocalAggregationCoordinator(
 
                     val sourceFloor = checkpoint.dirtyFromEpochMs
                         ?: checkpoint.lastCompletedEndEpochMs
-                        ?: dailySources.first().createdAtEpochMs
+                        ?: dailySources.firstOrNull()?.createdAtEpochMs
+                        ?: run {
+                            dailySources = repository.rollupsByGranularity(granularity).map { rollup ->
+                                SemanticDocument(
+                                    sourceId = rollup.id,
+                                    title = rollup.title,
+                                    body = rollup.overview,
+                                    noteIds = rollup.noteIds,
+                                    createdAtEpochMs = rollup.periodStartEpochMs,
+                                )
+                            }
+                            return@forEach
+                        }
                     val effectiveFloor = configuredFloor?.let { max(it, sourceFloor) } ?: sourceFloor
 
                     try {
@@ -121,6 +134,7 @@ class LocalAggregationCoordinator(
                             ),
                         )
                     } catch (exception: Exception) {
+                        if (exception is CancellationException) throw exception
                         val refreshedCheckpoint = repository.checkpoint(granularity)
                         repository.updateCheckpoint(
                             refreshedCheckpoint.copy(

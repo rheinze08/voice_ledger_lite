@@ -226,7 +226,7 @@ class LocalSummaryEngine(
     @Serializable
     private data class ModelInsightPayload(
         val title: String = "",
-        val overview: String,
+        val overview: String = "",
     )
 
     companion object {

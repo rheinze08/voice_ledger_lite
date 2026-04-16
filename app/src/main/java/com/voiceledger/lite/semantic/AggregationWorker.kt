@@ -13,6 +13,7 @@ import androidx.work.multiprocess.RemoteCoroutineWorker
 import com.voiceledger.lite.data.LedgerDatabase
 import com.voiceledger.lite.data.LedgerRepository
 import com.voiceledger.lite.data.SettingsStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,18 +35,17 @@ class AggregationWorker(
             return@withContext Result.success()
         }
 
-        if (isManualTrigger) {
-            val initialMessage = if (rebuildFromStartDate) {
-                "Preparing full rebuild"
-            } else {
-                "Preparing summary update"
-            }
-            setProgress(AggregationScheduler.progressData(initialMessage, rebuildFromStartDate))
-            setForegroundAsync(createForegroundInfo(initialMessage, rebuildFromStartDate)).get()
-        }
-
         return@withContext aggregationMutex.withLock {
             runCatching {
+                if (isManualTrigger) {
+                    val initialMessage = if (rebuildFromStartDate) {
+                        "Preparing full rebuild"
+                    } else {
+                        "Preparing summary update"
+                    }
+                    setProgress(AggregationScheduler.progressData(initialMessage, rebuildFromStartDate))
+                    setForegroundAsync(createForegroundInfo(initialMessage, rebuildFromStartDate)).get()
+                }
                 val message = LocalAggregationCoordinator(applicationContext, repository, settingsStore)
                     .runAggregation(rebuildFromStartDate) { progressMessage ->
                         if (isManualTrigger) {
@@ -60,6 +60,7 @@ class AggregationWorker(
                     Result.success()
                 }
             }.getOrElse { exception ->
+                if (exception is CancellationException) throw exception
                 val message = exception.message ?: "Summary rebuild failed."
                 if (isManualTrigger) {
                     Result.failure(AggregationScheduler.failureData(message, rebuildFromStartDate))
