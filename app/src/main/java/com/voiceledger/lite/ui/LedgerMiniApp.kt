@@ -791,6 +791,18 @@ private fun ComposeScreen(
                     }
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onSave) {
+                    Text(
+                        if (state.editingNoteId == null) "Save note" else "Update note",
+                    )
+                }
+                OutlinedButton(onClick = onClear) {
+                    Text(
+                        if (state.editingNoteId == null) "Clear" else "Cancel edit",
+                    )
+                }
+            }
             ElevatedCard {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -844,24 +856,14 @@ private fun ComposeScreen(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onSave) {
-                Text(
-                    when {
-                        isEditingGeneratedSummary -> "Update summary"
-                        state.editingNoteId == null -> "Save note"
-                        else -> "Update note"
-                    },
-                )
-            }
-            OutlinedButton(onClick = onClear) {
-                Text(
-                    if (state.editingNoteId == null && !isEditingGeneratedSummary) {
-                        "Clear"
-                    } else {
-                        "Cancel edit"
-                    },
-                )
+        if (isEditingGeneratedSummary) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onSave) {
+                    Text("Update summary")
+                }
+                OutlinedButton(onClick = onClear) {
+                    Text("Cancel edit")
+                }
             }
         }
     }
