@@ -25,6 +25,7 @@ class AggregationWorker(
         val database = LedgerDatabaseFactory.open(applicationContext)
         val repository = LedgerRepository(database)
         val settingsStore = SettingsStore(applicationContext)
+        val runLogger = AggregationRunLogger(applicationContext)
         val isManualTrigger = AggregationScheduler.isManualTrigger(inputData)
         val rebuildFromStartDate = AggregationScheduler.isRebuildFromStart(inputData)
 
@@ -35,22 +36,26 @@ class AggregationWorker(
 
         return@withContext aggregationMutex.withLock {
             runCatching {
+                runLogger.beginRun(isManualTrigger = isManualTrigger, rebuildFromStartDate = rebuildFromStartDate)
                 if (isManualTrigger) {
                     val initialMessage = if (rebuildFromStartDate) {
                         "Preparing full rebuild"
                     } else {
                         "Preparing summary update"
                     }
+                    runLogger.append(initialMessage)
                     setProgress(AggregationScheduler.progressData(initialMessage, rebuildFromStartDate))
                     setForegroundAsync(createForegroundInfo(initialMessage, rebuildFromStartDate)).get()
                 }
                 val message = LocalAggregationCoordinator(applicationContext, repository, settingsStore)
                     .runAggregation(rebuildFromStartDate) { progressMessage ->
+                        runLogger.append(progressMessage)
                         if (isManualTrigger) {
                             setProgress(AggregationScheduler.progressData(progressMessage, rebuildFromStartDate))
                             setForegroundAsync(createForegroundInfo(progressMessage, rebuildFromStartDate)).get()
                         }
                     }
+                runLogger.append(message)
                 if (isManualTrigger) {
                     Result.success(AggregationScheduler.successData(message, rebuildFromStartDate))
                 } else {
@@ -61,6 +66,7 @@ class AggregationWorker(
                 if (exception is CancellationException) throw exception
                 val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
                 if (cause is CancellationException) throw cause
+                runLogger.appendThrowable("Aggregation failed", cause)
                 val message = cause.message?.takeIf { it.isNotBlank() }
                     ?: exception.message?.takeIf { it.isNotBlank() }
                     ?: "${cause.javaClass.simpleName} (no details available)"

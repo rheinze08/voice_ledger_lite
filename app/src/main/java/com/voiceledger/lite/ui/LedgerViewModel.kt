@@ -13,6 +13,8 @@ import com.voiceledger.lite.data.RollupGranularity
 import com.voiceledger.lite.data.SettingsStore
 import com.voiceledger.lite.data.isValidBackgroundProcessingTime
 import com.voiceledger.lite.semantic.AggregationCheckpoint
+import com.voiceledger.lite.semantic.AggregationLogSnapshot
+import com.voiceledger.lite.semantic.AggregationRunLogger
 import com.voiceledger.lite.semantic.AggregationScheduler
 import com.voiceledger.lite.semantic.GeneratedAnswer
 import com.voiceledger.lite.semantic.LocalAggregationCoordinator
@@ -82,6 +84,8 @@ data class LedgerUiState(
     val errorMessage: String? = null,
     val progressLog: List<String> = emptyList(),
     val lastRunSucceeded: Boolean? = null,
+    val debugLogPath: String? = null,
+    val debugLogTail: List<String> = emptyList(),
 )
 
 class LedgerViewModel(
@@ -91,6 +95,7 @@ class LedgerViewModel(
     private val coordinator: LocalAggregationCoordinator,
 ) : ViewModel() {
     private val modelProvisioner = LocalModelProvisioner(appContext, settingsStore)
+    private val aggregationRunLogger = AggregationRunLogger(appContext)
     private var showProvisioningSuccessMessage = false
     private var hasObservedAggregationWork = false
     private var lastHandledAggregationTerminalId: String? = null
@@ -533,6 +538,8 @@ class LedgerViewModel(
                 errorMessage = null,
                 progressLog = emptyList(),
                 lastRunSucceeded = null,
+                debugLogPath = null,
+                debugLogTail = emptyList(),
             )
         }
         AggregationScheduler.enqueueImmediate(appContext, rebuildFromStartDate)
@@ -621,6 +628,11 @@ class LedgerViewModel(
             } else {
                 null
             }
+            val debugLogSnapshot: AggregationLogSnapshot? = if (isNewProgressMessage || shouldHandleTerminal) {
+                aggregationRunLogger.snapshot()
+            } else {
+                null
+            }
             val isTerminalFailure = shouldHandleTerminal &&
                 terminalResult != null &&
                 terminalResult.state != androidx.work.WorkInfo.State.SUCCEEDED
@@ -665,6 +677,8 @@ class LedgerViewModel(
                             terminalResult.state == androidx.work.WorkInfo.State.SUCCEEDED
                         else -> state.lastRunSucceeded
                     },
+                    debugLogPath = debugLogSnapshot?.path ?: state.debugLogPath,
+                    debugLogTail = debugLogSnapshot?.tail ?: state.debugLogTail,
                     infoMessage = when {
                         shouldHandleTerminal && terminalResult?.state == androidx.work.WorkInfo.State.SUCCEEDED ->
                             terminalResult.message ?: "Summaries and semantic search index refreshed."

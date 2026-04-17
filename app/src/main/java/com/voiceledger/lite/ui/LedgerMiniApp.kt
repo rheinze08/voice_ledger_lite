@@ -735,6 +735,32 @@ private fun SummarizeScreen(
                 }
             }
         }
+        if (state.debugLogTail.isNotEmpty()) {
+            item {
+                ElevatedCard {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Debug log", style = MaterialTheme.typography.titleMedium)
+                        state.debugLogPath?.let { path ->
+                            Text(
+                                path,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        state.debugLogTail.forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item {
             ModelProvisioningCard(
                 state = state,
