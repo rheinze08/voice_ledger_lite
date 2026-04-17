@@ -11,6 +11,9 @@ import androidx.work.multiprocess.RemoteCoroutineWorker
 import com.voiceledger.lite.data.LedgerDatabase
 import com.voiceledger.lite.data.LedgerRepository
 import com.voiceledger.lite.data.SettingsStore
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -27,7 +30,8 @@ class AggregationWorker(
         val settingsStore = SettingsStore(applicationContext)
         val runLogger = AggregationRunLogger(applicationContext)
         val isManualTrigger = AggregationScheduler.isManualTrigger(inputData)
-        val rebuildFromStartDate = AggregationScheduler.isRebuildFromStart(inputData)
+        val rebuildRequested = AggregationScheduler.isRebuildRequested(inputData)
+        val rebuildFromEpochMs = AggregationScheduler.rebuildFromEpochMs(inputData)
 
         val settings = settingsStore.load()
         if (!isManualTrigger && !settings.backgroundProcessingEnabled) {
@@ -36,28 +40,34 @@ class AggregationWorker(
 
         return@withContext aggregationMutex.withLock {
             runCatching {
-                runLogger.beginRun(isManualTrigger = isManualTrigger, rebuildFromStartDate = rebuildFromStartDate)
+                runLogger.beginRun(
+                    isManualTrigger = isManualTrigger,
+                    rebuildRequested = rebuildRequested,
+                    rebuildFromEpochMs = rebuildFromEpochMs,
+                )
                 if (isManualTrigger) {
-                    val initialMessage = if (rebuildFromStartDate) {
-                        "Preparing full rebuild"
+                    val initialMessage = if (rebuildRequested) {
+                        rebuildFromEpochMs?.let {
+                            "Preparing rebuild from ${formatEpochDate(it)}"
+                        } ?: "Preparing full rebuild"
                     } else {
                         "Preparing summary update"
                     }
                     runLogger.append(initialMessage)
-                    setProgress(AggregationScheduler.progressData(initialMessage, rebuildFromStartDate))
-                    setForegroundAsync(createForegroundInfo(initialMessage, rebuildFromStartDate)).get()
+                    setProgress(AggregationScheduler.progressData(initialMessage, rebuildRequested))
+                    setForegroundAsync(createForegroundInfo(initialMessage, rebuildRequested)).get()
                 }
                 val message = LocalAggregationCoordinator(applicationContext, repository, settingsStore)
-                    .runAggregation(rebuildFromStartDate) { progressMessage ->
+                    .runAggregation(rebuildRequested, rebuildFromEpochMs) { progressMessage ->
                         runLogger.append(progressMessage)
                         if (isManualTrigger) {
-                            setProgress(AggregationScheduler.progressData(progressMessage, rebuildFromStartDate))
-                            setForegroundAsync(createForegroundInfo(progressMessage, rebuildFromStartDate)).get()
+                            setProgress(AggregationScheduler.progressData(progressMessage, rebuildRequested))
+                            setForegroundAsync(createForegroundInfo(progressMessage, rebuildRequested)).get()
                         }
                     }
                 runLogger.append(message)
                 if (isManualTrigger) {
-                    Result.success(AggregationScheduler.successData(message, rebuildFromStartDate))
+                    Result.success(AggregationScheduler.successData(message, rebuildRequested))
                 } else {
                     AggregationScheduler.scheduleNextFromWorker(applicationContext, settingsStore.load())
                     Result.success()
@@ -71,7 +81,7 @@ class AggregationWorker(
                     ?: exception.message?.takeIf { it.isNotBlank() }
                     ?: "${cause.javaClass.simpleName} (no details available)"
                 if (isManualTrigger) {
-                    Result.failure(AggregationScheduler.failureData(message, rebuildFromStartDate))
+                    Result.failure(AggregationScheduler.failureData(message, rebuildRequested))
                 } else {
                     Result.retry()
                 }
@@ -79,9 +89,9 @@ class AggregationWorker(
         }
     }
 
-    private fun createForegroundInfo(message: String, rebuildFromStartDate: Boolean): ForegroundInfo {
+    private fun createForegroundInfo(message: String, rebuildRequested: Boolean): ForegroundInfo {
         createNotificationChannelIfNeeded()
-        val title = if (rebuildFromStartDate) {
+        val title = if (rebuildRequested) {
             "Rebuilding Voice Ledger summaries"
         } else {
             "Updating Voice Ledger summaries"
@@ -133,4 +143,10 @@ class AggregationWorker(
         private const val NOTIFICATION_ID = 1102
         private val aggregationMutex = Mutex()
     }
+}
+
+private fun formatEpochDate(epochMs: Long): String {
+    return DateTimeFormatter.ofPattern("MMM d, yyyy")
+        .withZone(ZoneId.systemDefault())
+        .format(Instant.ofEpochMilli(epochMs))
 }

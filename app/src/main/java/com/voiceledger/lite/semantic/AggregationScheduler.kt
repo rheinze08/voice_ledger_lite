@@ -23,7 +23,9 @@ object AggregationScheduler {
     private const val SCHEDULED_WORK_NAME = "voice-ledger-scheduled-aggregation"
     private const val IMMEDIATE_WORK_NAME = "voice-ledger-immediate-aggregation"
     private const val KEY_MANUAL_TRIGGER = "manual_trigger"
-    private const val KEY_REBUILD_FROM_START = "rebuild_from_start"
+    private const val KEY_REBUILD_REQUESTED = "rebuild_requested"
+    private const val KEY_HAS_REBUILD_FROM_EPOCH_MS = "has_rebuild_from_epoch_ms"
+    private const val KEY_REBUILD_FROM_EPOCH_MS = "rebuild_from_epoch_ms"
     private const val KEY_PROGRESS_MESSAGE = "progress_message"
     private const val KEY_RESULT_MESSAGE = "result_message"
     private const val KEY_ERROR_MESSAGE = "error_message"
@@ -34,7 +36,7 @@ object AggregationScheduler {
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
         val request = OneTimeWorkRequestBuilder<AggregationWorker>()
-            .setInputData(remoteInputData(context, manualTrigger = false, rebuildFromStartDate = false))
+            .setInputData(remoteInputData(context, manualTrigger = false, rebuildRequested = false, rebuildFromEpochMs = null))
             .setConstraints(constraints)
             .setInitialDelay(nextScheduledDelay(settings.backgroundProcessingTime))
             .build()
@@ -57,7 +59,7 @@ object AggregationScheduler {
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
         val request = OneTimeWorkRequestBuilder<AggregationWorker>()
-            .setInputData(remoteInputData(context, manualTrigger = false, rebuildFromStartDate = false))
+            .setInputData(remoteInputData(context, manualTrigger = false, rebuildRequested = false, rebuildFromEpochMs = null))
             .setConstraints(constraints)
             .setInitialDelay(nextScheduledDelay(settings.backgroundProcessingTime))
             .build()
@@ -68,9 +70,20 @@ object AggregationScheduler {
         )
     }
 
-    fun enqueueImmediate(context: Context, rebuildFromStartDate: Boolean) {
+    fun enqueueImmediate(
+        context: Context,
+        rebuildRequested: Boolean,
+        rebuildFromEpochMs: Long? = null,
+    ) {
         val request = OneTimeWorkRequestBuilder<AggregationWorker>()
-            .setInputData(remoteInputData(context, manualTrigger = true, rebuildFromStartDate = rebuildFromStartDate))
+            .setInputData(
+                remoteInputData(
+                    context,
+                    manualTrigger = true,
+                    rebuildRequested = rebuildRequested,
+                    rebuildFromEpochMs = rebuildFromEpochMs,
+                ),
+            )
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             IMMEDIATE_WORK_NAME,
@@ -93,8 +106,8 @@ object AggregationScheduler {
 
     fun immediateWorkIsRebuild(workInfos: List<WorkInfo>): Boolean {
         val work = mostRelevantImmediateWork(workInfos)
-        return work?.progress?.getBoolean(KEY_REBUILD_FROM_START, false)
-            ?: work?.outputData?.getBoolean(KEY_REBUILD_FROM_START, false)
+        return work?.progress?.getBoolean(KEY_REBUILD_REQUESTED, false)
+            ?: work?.outputData?.getBoolean(KEY_REBUILD_REQUESTED, false)
             ?: false
     }
 
@@ -127,46 +140,69 @@ object AggregationScheduler {
         workManager.cancelUniqueWork(SCHEDULED_WORK_NAME)
     }
 
-    fun inputData(manualTrigger: Boolean, rebuildFromStartDate: Boolean): Data {
-        return workDataOf(
-            KEY_MANUAL_TRIGGER to manualTrigger,
-            KEY_REBUILD_FROM_START to rebuildFromStartDate,
-        )
+    fun inputData(
+        manualTrigger: Boolean,
+        rebuildRequested: Boolean,
+        rebuildFromEpochMs: Long?,
+    ): Data {
+        val builder = Data.Builder()
+            .putBoolean(KEY_MANUAL_TRIGGER, manualTrigger)
+            .putBoolean(KEY_REBUILD_REQUESTED, rebuildRequested)
+        if (rebuildFromEpochMs != null) {
+            builder.putBoolean(KEY_HAS_REBUILD_FROM_EPOCH_MS, true)
+            builder.putLong(KEY_REBUILD_FROM_EPOCH_MS, rebuildFromEpochMs)
+        }
+        return builder.build()
     }
 
-    fun progressData(message: String, rebuildFromStartDate: Boolean): Data {
+    fun progressData(message: String, rebuildRequested: Boolean): Data {
         return workDataOf(
             KEY_PROGRESS_MESSAGE to message,
-            KEY_REBUILD_FROM_START to rebuildFromStartDate,
+            KEY_REBUILD_REQUESTED to rebuildRequested,
         )
     }
 
-    fun successData(message: String, rebuildFromStartDate: Boolean): Data {
+    fun successData(message: String, rebuildRequested: Boolean): Data {
         return workDataOf(
             KEY_RESULT_MESSAGE to message,
-            KEY_REBUILD_FROM_START to rebuildFromStartDate,
+            KEY_REBUILD_REQUESTED to rebuildRequested,
         )
     }
 
-    fun failureData(message: String, rebuildFromStartDate: Boolean): Data {
+    fun failureData(message: String, rebuildRequested: Boolean): Data {
         return workDataOf(
             KEY_ERROR_MESSAGE to message,
-            KEY_REBUILD_FROM_START to rebuildFromStartDate,
+            KEY_REBUILD_REQUESTED to rebuildRequested,
         )
     }
 
     fun isManualTrigger(params: Data): Boolean = params.getBoolean(KEY_MANUAL_TRIGGER, false)
 
-    fun isRebuildFromStart(params: Data): Boolean = params.getBoolean(KEY_REBUILD_FROM_START, false)
+    fun isRebuildRequested(params: Data): Boolean = params.getBoolean(KEY_REBUILD_REQUESTED, false)
+
+    fun rebuildFromEpochMs(params: Data): Long? {
+        return if (params.getBoolean(KEY_HAS_REBUILD_FROM_EPOCH_MS, false)) {
+            params.getLong(KEY_REBUILD_FROM_EPOCH_MS, 0L)
+        } else {
+            null
+        }
+    }
 
     private fun remoteInputData(
         context: Context,
         manualTrigger: Boolean,
-        rebuildFromStartDate: Boolean,
+        rebuildRequested: Boolean,
+        rebuildFromEpochMs: Long?,
     ): Data {
         val componentName = ComponentName(context, androidx.work.multiprocess.RemoteWorkerService::class.java)
         return Data.Builder()
-            .putAll(inputData(manualTrigger = manualTrigger, rebuildFromStartDate = rebuildFromStartDate))
+            .putAll(
+                inputData(
+                    manualTrigger = manualTrigger,
+                    rebuildRequested = rebuildRequested,
+                    rebuildFromEpochMs = rebuildFromEpochMs,
+                ),
+            )
             .putString(RemoteListenableWorker.ARGUMENT_PACKAGE_NAME, componentName.packageName)
             .putString(RemoteListenableWorker.ARGUMENT_CLASS_NAME, componentName.className)
             .build()

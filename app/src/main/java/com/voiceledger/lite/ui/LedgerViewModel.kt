@@ -697,7 +697,33 @@ class LedgerViewModel(
         }
     }
 
-    fun refreshInsights(rebuildFromStartDate: Boolean = false) {
+    fun refreshInsights() {
+        startAggregationRefresh(mode = InsightRefreshMode.UPDATE, rebuildFromEpochMs = null)
+    }
+
+    fun rebuildAllHistory() {
+        startAggregationRefresh(mode = InsightRefreshMode.REBUILD, rebuildFromEpochMs = null)
+    }
+
+    fun rebuildFromDate(dateString: String) {
+        val rebuildFromEpochMs = runCatching {
+            LocalDate.parse(dateString.trim())
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrElse {
+            _uiState.update { state ->
+                state.copy(errorMessage = "Rebuild date must use YYYY-MM-DD.")
+            }
+            return
+        }
+        startAggregationRefresh(mode = InsightRefreshMode.REBUILD, rebuildFromEpochMs = rebuildFromEpochMs)
+    }
+
+    private fun startAggregationRefresh(
+        mode: InsightRefreshMode,
+        rebuildFromEpochMs: Long?,
+    ) {
         if (_uiState.value.isRefreshingInsights) {
             return
         }
@@ -705,7 +731,7 @@ class LedgerViewModel(
         _uiState.update {
             it.copy(
                 isRefreshingInsights = true,
-                activeInsightRefreshMode = if (rebuildFromStartDate) InsightRefreshMode.REBUILD else InsightRefreshMode.UPDATE,
+                activeInsightRefreshMode = mode,
                 errorMessage = null,
                 progressLog = emptyList(),
                 lastRunSucceeded = null,
@@ -713,7 +739,11 @@ class LedgerViewModel(
                 debugLogTail = emptyList(),
             )
         }
-        AggregationScheduler.enqueueImmediate(appContext, rebuildFromStartDate)
+        AggregationScheduler.enqueueImmediate(
+            context = appContext,
+            rebuildRequested = mode == InsightRefreshMode.REBUILD,
+            rebuildFromEpochMs = rebuildFromEpochMs,
+        )
     }
 
     fun clearInfoMessage() {

@@ -11,10 +11,14 @@ class AggregationRunLogger(context: Context) {
     private val latestLogFile = File(logDirectory, LATEST_LOG_FILE)
     private var sessionLogFile: File? = null
 
-    fun beginRun(isManualTrigger: Boolean, rebuildFromStartDate: Boolean): AggregationLogSnapshot {
+    fun beginRun(
+        isManualTrigger: Boolean,
+        rebuildRequested: Boolean,
+        rebuildFromEpochMs: Long?,
+    ): AggregationLogSnapshot {
         val timestamp = FILE_NAME_FORMATTER.format(Instant.now())
         val mode = when {
-            rebuildFromStartDate -> "rebuild"
+            rebuildRequested -> "rebuild"
             isManualTrigger -> "update"
             else -> "scheduled"
         }
@@ -22,6 +26,9 @@ class AggregationRunLogger(context: Context) {
         latestLogFile.parentFile?.mkdirs()
         latestLogFile.writeText("")
         append("Run started ($mode)")
+        if (rebuildRequested && rebuildFromEpochMs != null) {
+            append("Rebuild floor: ${DISPLAY_DATE_FORMATTER.format(Instant.ofEpochMilli(rebuildFromEpochMs))}")
+        }
         pruneHistory()
         return snapshot()
     }
@@ -101,6 +108,7 @@ class AggregationRunLogger(context: Context) {
         private const val DEFAULT_TAIL_LINES = 80
         private val FILE_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault())
         private val LINE_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault())
+        private val DISPLAY_DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy").withZone(ZoneId.systemDefault())
     }
 }
 

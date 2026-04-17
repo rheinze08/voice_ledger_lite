@@ -37,7 +37,8 @@ class LocalAggregationCoordinator(
     private val zoneId = ZoneId.systemDefault()
 
     suspend fun runAggregation(
-        rebuildFromStartDate: Boolean = false,
+        rebuildRequested: Boolean = false,
+        rebuildFromEpochMs: Long? = null,
         onProgress: suspend (String) -> Unit = {},
     ): String = withContext(Dispatchers.IO) {
         val runReferenceEpochMs = System.currentTimeMillis()
@@ -53,8 +54,14 @@ class LocalAggregationCoordinator(
             .takeIf(String::isNotBlank)
             ?.let { LocalDate.parse(it).atStartOfDay(zoneId).toInstant().toEpochMilli() }
 
-        if (rebuildFromStartDate && configuredFloor != null) {
-            repository.markDirtyFrom(configuredFloor)
+        val rebuildFloor = when {
+            rebuildFromEpochMs != null -> rebuildFromEpochMs
+            rebuildRequested -> notes.first().createdAtEpochMs
+            else -> null
+        }
+
+        if (rebuildFloor != null) {
+            repository.markDirtyFrom(rebuildFloor)
         }
 
         val checkpoints = RollupGranularity.entries.associateWith { granularity ->
@@ -62,7 +69,7 @@ class LocalAggregationCoordinator(
         }
         val dirtyFloor = checkpoints.values.mapNotNull(AggregationCheckpoint::dirtyFromEpochMs).minOrNull()
         val noteReindexFloor = when {
-            rebuildFromStartDate -> configuredFloor ?: notes.first().createdAtEpochMs
+            rebuildFloor != null -> rebuildFloor
             dirtyFloor != null -> dirtyFloor
             checkpoints.values.all { it.lastCompletedEndEpochMs == null } -> notes.first().createdAtEpochMs
             else -> null
@@ -95,11 +102,13 @@ class LocalAggregationCoordinator(
                     repository.updateCheckpoint(
                         checkpoint.copy(
                             lastRunStartedEpochMs = runReferenceEpochMs,
+                            dirtyFromEpochMs = rebuildFloor ?: checkpoint.dirtyFromEpochMs,
                             lastError = null,
                         ),
                     )
 
-                    val sourceFloor = checkpoint.dirtyFromEpochMs
+                    val sourceFloor = rebuildFloor
+                        ?: checkpoint.dirtyFromEpochMs
                         ?: checkpoint.lastCompletedEndEpochMs
                         ?: dailySources.firstOrNull()?.createdAtEpochMs
                         ?: run {
@@ -114,7 +123,10 @@ class LocalAggregationCoordinator(
                             }
                             return@forEach
                         }
-                    val effectiveFloor = configuredFloor?.let { max(it, sourceFloor) } ?: sourceFloor
+                    val effectiveFloor = when {
+                        rebuildFloor != null -> rebuildFloor
+                        else -> configuredFloor?.let { max(it, sourceFloor) } ?: sourceFloor
+                    }
 
                     try {
                         val lastProcessedEnd = processGranularity(

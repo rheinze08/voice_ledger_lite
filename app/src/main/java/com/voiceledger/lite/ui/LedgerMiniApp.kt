@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -40,6 +41,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -53,7 +55,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -178,6 +183,11 @@ fun LedgerMiniApp(
                 onBodyChange = viewModel::updateComposeBody,
                 onDateChange = viewModel::updateComposeDate,
                 onToggleLabel = viewModel::toggleComposeLabel,
+                onLabelDraftChange = viewModel::updateLabelDraft,
+                onEditLabel = viewModel::editLabel,
+                onClearLabelEditor = viewModel::clearLabelEditor,
+                onSaveLabel = viewModel::saveLabel,
+                onDeleteLabel = viewModel::deleteEditingLabel,
                 onSave = viewModel::saveDraft,
                 onClear = viewModel::clearComposer,
             )
@@ -192,15 +202,11 @@ fun LedgerMiniApp(
             AppTab.SUMMARIZE -> SummarizeScreen(
                 state = state,
                 paddingValues = innerPadding,
-                onLabelDraftChange = viewModel::updateLabelDraft,
-                onEditLabel = viewModel::editLabel,
-                onClearLabelEditor = viewModel::clearLabelEditor,
-                onSaveLabel = viewModel::saveLabel,
-                onDeleteLabel = viewModel::deleteEditingLabel,
                 onBackgroundProcessingChange = viewModel::updateBackgroundProcessing,
                 onBackgroundProcessingTimeChange = viewModel::updateBackgroundProcessingTime,
-                onRefresh = { viewModel.refreshInsights(false) },
-                onRebuild = { viewModel.refreshInsights(true) },
+                onRefresh = viewModel::refreshInsights,
+                onRebuildAll = viewModel::rebuildAllHistory,
+                onRebuildFromDate = viewModel::rebuildFromDate,
                 onRetryModelProvisioning = viewModel::retryModelProvisioning,
                 onExportCorpus = {
                     exportLauncher.launch("voice-ledger-export-${LocalDate.now()}.json")
@@ -699,6 +705,11 @@ private fun ComposeScreen(
     onBodyChange: (String) -> Unit,
     onDateChange: (String) -> Unit,
     onToggleLabel: (Long) -> Unit,
+    onLabelDraftChange: (String) -> Unit,
+    onEditLabel: (Long) -> Unit,
+    onClearLabelEditor: () -> Unit,
+    onSaveLabel: () -> Unit,
+    onDeleteLabel: () -> Unit,
     onSave: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -756,7 +767,7 @@ private fun ComposeScreen(
             Text("Tags", style = MaterialTheme.typography.titleMedium)
             if (state.labels.isEmpty()) {
                 Text(
-                    "Create reusable tags in Summarize, then come back here to apply them.",
+                    "Create reusable tags here, then apply them to notes below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -776,6 +787,58 @@ private fun ComposeScreen(
                                 onCheckedChange = null,
                             )
                             Text(text = label.name, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+            ElevatedCard {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Manage tags", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Keep a small reusable set. Notes can carry multiple tags, and Ask can filter by them later.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = state.labelDraft,
+                        onValueChange = onLabelDraftChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(if (state.editingLabelId == null) "New tag" else "Edit tag") },
+                        singleLine = true,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(
+                            onClick = onSaveLabel,
+                            enabled = state.editingLabelId != null || state.labels.size < MAX_TAGS,
+                        ) {
+                            Text(if (state.editingLabelId == null) "Add tag" else "Save tag")
+                        }
+                        if (state.editingLabelId != null) {
+                            OutlinedButton(onClick = onClearLabelEditor) {
+                                Text("Cancel")
+                            }
+                            TextButton(onClick = onDeleteLabel) {
+                                Text("Delete")
+                            }
+                        }
+                    }
+                    Text(
+                        "${state.labels.size} / $MAX_TAGS tags saved",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (state.labels.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            state.labels.forEach { label ->
+                                FilterChip(
+                                    selected = state.editingLabelId == label.id,
+                                    onClick = { onEditLabel(label.id) },
+                                    label = { Text(label.name) },
+                                )
+                            }
                         }
                     }
                 }
@@ -956,25 +1019,95 @@ private fun AnswerPanel(answer: GeneratedAnswer) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SummarizeScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
-    onLabelDraftChange: (String) -> Unit,
-    onEditLabel: (Long) -> Unit,
-    onClearLabelEditor: () -> Unit,
-    onSaveLabel: () -> Unit,
-    onDeleteLabel: () -> Unit,
     onBackgroundProcessingChange: (Boolean) -> Unit,
     onBackgroundProcessingTimeChange: (String) -> Unit,
     onRefresh: () -> Unit,
-    onRebuild: () -> Unit,
+    onRebuildAll: () -> Unit,
+    onRebuildFromDate: (String) -> Unit,
     onRetryModelProvisioning: () -> Unit,
     onExportCorpus: () -> Unit,
     onImportCorpus: () -> Unit,
     onSave: () -> Unit,
 ) {
+    var showRebuildDialog by rememberSaveable { mutableStateOf(false) }
+    var rebuildDateDraft by rememberSaveable(state.notes.firstOrNull()?.note?.createdAtEpochMs, state.settings.summaryStartDate) {
+        mutableStateOf(defaultRebuildDate(state))
+    }
+    var showRunLog by rememberSaveable { mutableStateOf(false) }
+    var showModels by rememberSaveable { mutableStateOf(false) }
+    val latestRunEntry = state.progressLog.lastOrNull()
+    val latestDebugEntry = state.debugLogTail.lastOrNull()
+    val runLogSummary = when {
+        latestRunEntry != null && state.lastRunSucceeded == false -> "Latest failure: $latestRunEntry"
+        latestRunEntry != null -> "Latest run: $latestRunEntry"
+        latestDebugEntry != null -> latestDebugEntry
+        else -> "No run data yet."
+    }
+    val modelSummary = when {
+        state.isProvisioningModels -> "Installing local models."
+        state.modelProvisioning.allReady -> "Summary and embedding models are ready."
+        else -> {
+            val summaryState = state.modelProvisioning.summary.state.displayLabel()
+            val embeddingState = state.modelProvisioning.embedding.state.displayLabel()
+            "Summary model: $summaryState. Embedding model: $embeddingState."
+        }
+    }
+
+    if (showRebuildDialog) {
+        AlertDialog(
+            onDismissRequest = { showRebuildDialog = false },
+            title = { Text("Rebuild summaries") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Rebuild replaces generated summaries in the selected range. Use Update for the normal incremental pass.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        value = rebuildDateDraft,
+                        onValueChange = { rebuildDateDraft = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Rebuild from date") },
+                        placeholder = { Text("YYYY-MM-DD") },
+                        supportingText = {
+                            Text("Leave this as-is to rebuild from a specific date, or use Rebuild all to overwrite the full history.")
+                        },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            showRebuildDialog = false
+                            onRebuildFromDate(rebuildDateDraft)
+                        },
+                    ) {
+                        Text("Rebuild from date")
+                    }
+                    Button(
+                        onClick = {
+                            showRebuildDialog = false
+                            onRebuildAll()
+                        },
+                    ) {
+                        Text("Rebuild all")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRebuildDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1005,7 +1138,10 @@ private fun SummarizeScreen(
                             }
                             Text("Update")
                         }
-                        OutlinedButton(onClick = onRebuild, enabled = !state.isRefreshingInsights) {
+                        OutlinedButton(
+                            onClick = { showRebuildDialog = true },
+                            enabled = !state.isRefreshingInsights,
+                        ) {
                             if (state.activeInsightRefreshMode == InsightRefreshMode.REBUILD) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
@@ -1015,6 +1151,38 @@ private fun SummarizeScreen(
                             }
                             Text("Rebuild")
                         }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Background processing", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Runs one daily update around your selected local time. Android can still shift the exact minute slightly.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = state.settings.backgroundProcessingEnabled,
+                            onCheckedChange = onBackgroundProcessingChange,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = state.settings.backgroundProcessingTime,
+                        onValueChange = onBackgroundProcessingTimeChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Daily update time") },
+                        placeholder = { Text("HH:MM") },
+                        supportingText = {
+                            Text("24-hour local time, for example 02:00 or 21:30.")
+                        },
+                        singleLine = true,
+                    )
+                    Button(onClick = onSave) {
+                        Text("Save changes")
                     }
                     if (state.isRefreshingInsights) {
                         Text(
@@ -1026,66 +1194,13 @@ private fun SummarizeScreen(
                 }
             }
         }
-        if (state.progressLog.isNotEmpty()) {
+        if (state.checkpoints.isNotEmpty()) {
             item {
-                ElevatedCard {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text("Last run log", style = MaterialTheme.typography.titleMedium)
-                        state.progressLog.forEachIndexed { index, entry ->
-                            val isLastEntry = index == state.progressLog.lastIndex
-                            Text(
-                                "· $entry",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = when {
-                                    isLastEntry && state.lastRunSucceeded == false ->
-                                        MaterialTheme.colorScheme.error
-                                    isLastEntry && state.lastRunSucceeded == true ->
-                                        MaterialTheme.colorScheme.primary
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                    }
-                }
+                Text("Checkpoints", style = MaterialTheme.typography.titleLarge)
             }
-        }
-        if (state.debugLogTail.isNotEmpty()) {
-            item {
-                ElevatedCard {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Debug log", style = MaterialTheme.typography.titleMedium)
-                        state.debugLogPath?.let { path ->
-                            Text(
-                                path,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        state.debugLogTail.forEach { line ->
-                            Text(
-                                line,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
+            items(state.checkpoints, key = { it.granularity.name }) { checkpoint ->
+                CheckpointCard(checkpoint)
             }
-        }
-        item {
-            ModelProvisioningCard(
-                state = state,
-                onRetry = onRetryModelProvisioning,
-            )
-        }
-        item {
-            StatsRow(state.localStats)
         }
         item {
             ElevatedCard {
@@ -1093,7 +1208,7 @@ private fun SummarizeScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("Data", style = MaterialTheme.typography.headlineSmall)
+                    Text("Manage Data", style = MaterialTheme.typography.headlineSmall)
                     Text(
                         "Export the base notes with their original dates and tags, or import a JSON corpus. Import matches existing tags by name, creates missing tags up to the global limit, and skips exact duplicate notes.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -1132,7 +1247,122 @@ private fun SummarizeScreen(
                 }
             }
         }
-        if (state.checkpoints.isNotEmpty()) {
+        item {
+            StatsRow(state.localStats)
+        }
+        if (false && state.progressLog.isNotEmpty()) {
+            item {
+                ElevatedCard {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("Last run log", style = MaterialTheme.typography.titleMedium)
+                        state.progressLog.forEachIndexed { index, entry ->
+                            val isLastEntry = index == state.progressLog.lastIndex
+                            Text(
+                                "· $entry",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    isLastEntry && state.lastRunSucceeded == false ->
+                                        MaterialTheme.colorScheme.error
+                                    isLastEntry && state.lastRunSucceeded == true ->
+                                        MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (false && state.debugLogTail.isNotEmpty()) {
+            item {
+                ElevatedCard {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Debug log", style = MaterialTheme.typography.titleMedium)
+                        state.debugLogPath?.let { path ->
+                            Text(
+                                path,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        state.debugLogTail.forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            if (false) {
+                ModelProvisioningCard(
+                    state = state,
+                    onRetry = onRetryModelProvisioning,
+                )
+            }
+        }
+        item {
+            if (false) {
+                StatsRow(state.localStats)
+            }
+        }
+        item {
+            if (false) {
+                ElevatedCard {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("Data", style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            "Export the base notes with their original dates and tags, or import a JSON corpus. Import matches existing tags by name, creates missing tags up to the global limit, and skips exact duplicate notes.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = onExportCorpus,
+                                enabled = !state.isTransferringCorpus,
+                            ) {
+                                Text("Export notes")
+                            }
+                            OutlinedButton(
+                                onClick = onImportCorpus,
+                                enabled = !state.isTransferringCorpus,
+                            ) {
+                                Text("Import notes")
+                            }
+                        }
+                        if (state.isTransferringCorpus) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Text(
+                                    "Processing corpus file.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (false && state.checkpoints.isNotEmpty()) {
             item {
                 Text("Checkpoints", style = MaterialTheme.typography.titleLarge)
             }
@@ -1161,115 +1391,70 @@ private fun SummarizeScreen(
             }
         }
         item {
-            ElevatedCard {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text("Tags", style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        "Keep a small reusable set. Notes can carry multiple tags, and search can filter by them later.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedTextField(
-                        value = state.labelDraft,
-                        onValueChange = onLabelDraftChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(if (state.editingLabelId == null) "New tag" else "Edit tag") },
-                        singleLine = true,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(
-                            onClick = onSaveLabel,
-                            enabled = state.editingLabelId != null || state.labels.size < MAX_TAGS,
-                        ) {
-                            Text(if (state.editingLabelId == null) "Add tag" else "Save tag")
-                        }
-                        if (state.editingLabelId != null) {
-                            OutlinedButton(onClick = onClearLabelEditor) {
-                                Text("Cancel")
-                            }
-                            TextButton(onClick = onDeleteLabel) {
-                                Text("Delete")
-                            }
-                        }
-                    }
-                    Text(
-                        "${state.labels.size} / $MAX_TAGS tags saved",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (state.labels.isEmpty()) {
+            ExpandableSectionCard(
+                title = "Summarize Run Log",
+                summary = runLogSummary,
+                expanded = showRunLog,
+                onToggle = { showRunLog = !showRunLog },
+            ) {
+                if (state.progressLog.isNotEmpty()) {
+                    Text("Run steps", style = MaterialTheme.typography.titleMedium)
+                    state.progressLog.forEachIndexed { index, entry ->
+                        val isLastEntry = index == state.progressLog.lastIndex
                         Text(
-                            "No tags yet.",
+                            "- $entry",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when {
+                                isLastEntry && state.lastRunSucceeded == false ->
+                                    MaterialTheme.colorScheme.error
+                                isLastEntry && state.lastRunSucceeded == true ->
+                                    MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
+                if (state.debugLogTail.isNotEmpty()) {
+                    if (state.progressLog.isNotEmpty()) {
+                        Spacer(Modifier.size(4.dp))
+                    }
+                    Text("Debug tail", style = MaterialTheme.typography.titleMedium)
+                    state.debugLogPath?.let { path ->
+                        Text(
+                            path,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    } else {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            state.labels.forEach { label ->
-                                FilterChip(
-                                    selected = state.editingLabelId == label.id,
-                                    onClick = { onEditLabel(label.id) },
-                                    label = { Text(label.name) },
-                                )
-                            }
-                        }
-                        if (state.editingLabelId == null && state.labels.size >= MAX_TAGS) {
-                            Text(
-                                "You have reached the tag limit. Edit or delete an existing tag to make room for a new one.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    }
+                    state.debugLogTail.forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
-            }
-        }
-        item {
-            Text(
-                        "Background processing can run one daily update around a time you choose.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Background processing", style = MaterialTheme.typography.titleMedium)
+                if (state.progressLog.isEmpty() && state.debugLogTail.isEmpty()) {
                     Text(
-                        "Runs one daily update around your selected local time. Android can still shift the exact minute slightly.",
+                        "No run data yet.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(
-                    checked = state.settings.backgroundProcessingEnabled,
-                    onCheckedChange = onBackgroundProcessingChange,
-                )
             }
         }
         item {
-            OutlinedTextField(
-                value = state.settings.backgroundProcessingTime,
-                onValueChange = onBackgroundProcessingTimeChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Daily update time") },
-                placeholder = { Text("HH:MM") },
-                supportingText = {
-                    Text("24-hour local time, for example 02:00 or 21:30.")
-                },
-                singleLine = true,
-            )
-        }
-        item {
-            Button(onClick = onSave) {
-                Text("Save changes")
+            ExpandableSectionCard(
+                title = "Models",
+                summary = modelSummary,
+                expanded = showModels,
+                onToggle = { showModels = !showModels },
+            ) {
+                ModelProvisioningCard(
+                    state = state,
+                    onRetry = onRetryModelProvisioning,
+                    embedded = true,
+                )
             }
         }
     }
@@ -1279,8 +1464,9 @@ private fun SummarizeScreen(
 private fun ModelProvisioningCard(
     state: LedgerUiState,
     onRetry: () -> Unit,
+    embedded: Boolean = false,
 ) {
-    ElevatedCard {
+    val content: @Composable () -> Unit = {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1325,6 +1511,48 @@ private fun ModelProvisioningCard(
                 OutlinedButton(onClick = onRetry) {
                     Text("Retry model install")
                 }
+            }
+        }
+    }
+    if (embedded) {
+        content()
+    } else {
+        ElevatedCard {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ExpandableSectionCard(
+    title: String,
+    summary: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(title, style = MaterialTheme.typography.headlineSmall)
+                TextButton(onClick = onToggle) {
+                    Text(if (expanded) "Collapse" else "Expand")
+                }
+            }
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (expanded) {
+                content()
             }
         }
     }
@@ -1436,7 +1664,7 @@ private fun CheckpointCard(checkpoint: AggregationCheckpoint) {
                 if (checkpoint.dirtyFromEpochMs == null) {
                     "Status: Up to date"
                 } else {
-                    "Status: Needs rebuild since ${formatTimestamp(checkpoint.dirtyFromEpochMs)}"
+                    "Status: Needs update since ${formatTimestamp(checkpoint.dirtyFromEpochMs)}"
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -1578,6 +1806,20 @@ private fun formatTimestamp(epochMs: Long): String {
 private fun formatDateOnly(epochMs: Long): String {
     val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy").withZone(ZoneId.systemDefault())
     return formatter.format(Instant.ofEpochMilli(epochMs))
+}
+
+private fun defaultRebuildDate(state: LedgerUiState): String {
+    return state.settings.summaryStartDate
+        .takeIf(String::isNotBlank)
+        ?: state.notes.minByOrNull { it.note.createdAtEpochMs }
+            ?.note
+            ?.createdAtEpochMs
+            ?.let { epochMs ->
+                DateTimeFormatter.ISO_LOCAL_DATE.format(
+                    Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalDate(),
+                )
+            }
+        ?: DateTimeFormatter.ISO_LOCAL_DATE.format(LocalDate.now())
 }
 
 private fun formatRollupPeriod(rollup: RollupSnapshot): String {
