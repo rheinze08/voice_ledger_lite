@@ -101,6 +101,9 @@ interface RollupDao {
     @Query("SELECT * FROM rollups ORDER BY period_end_epoch_ms DESC")
     suspend fun observeAllOnce(): List<RollupEntity>
 
+    @Query("SELECT * FROM rollups WHERE id = :rollupId LIMIT 1")
+    suspend fun getById(rollupId: String): RollupEntity?
+
     @Query(
         """
         SELECT * FROM rollups

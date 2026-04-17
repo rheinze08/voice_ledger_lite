@@ -165,6 +165,7 @@ fun LedgerMiniApp(
                 onSelectGeneratedLayer = viewModel::selectGeneratedDocumentLayer,
                 onSelectGeneratedGranularity = viewModel::selectGeneratedGranularity,
                 onSelectRollup = viewModel::selectRollup,
+                onEditRollup = viewModel::loadRollupIntoComposer,
                 onShowRollupSourceNotes = viewModel::showRollupSourceNotes,
                 onClearCreatedSourceFilter = viewModel::clearCreatedSourceFilter,
                 onEdit = viewModel::loadNoteIntoComposer,
@@ -299,6 +300,7 @@ private fun NotesScreen(
     onSelectGeneratedLayer: () -> Unit,
     onSelectGeneratedGranularity: (RollupGranularity) -> Unit,
     onSelectRollup: (String?) -> Unit,
+    onEditRollup: (RollupSnapshot) -> Unit,
     onShowRollupSourceNotes: (String) -> Unit,
     onClearCreatedSourceFilter: () -> Unit,
     onEdit: (NoteWithLabels) -> Unit,
@@ -397,6 +399,7 @@ private fun NotesScreen(
                 item {
                     GeneratedRollupActiveCard(
                         rollup = selectedRollup,
+                        onEdit = onEditRollup,
                         onShowSourceNotes = onShowRollupSourceNotes,
                     )
                 }
@@ -587,6 +590,7 @@ private fun CreatedNoteRecordCard(
 @Composable
 private fun GeneratedRollupActiveCard(
     rollup: RollupSnapshot,
+    onEdit: (RollupSnapshot) -> Unit,
     onShowSourceNotes: (String) -> Unit,
 ) {
     ElevatedCard(
@@ -610,8 +614,13 @@ private fun GeneratedRollupActiveCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(rollup.overview, style = MaterialTheme.typography.bodyMedium)
-            OutlinedButton(onClick = { onShowSourceNotes(rollup.id) }) {
-                Text("Show source notes")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { onEdit(rollup) }) {
+                    Text("Edit")
+                }
+                OutlinedButton(onClick = { onShowSourceNotes(rollup.id) }) {
+                    Text("Show source notes")
+                }
             }
         }
     }
@@ -693,6 +702,7 @@ private fun ComposeScreen(
     onSave: () -> Unit,
     onClear: () -> Unit,
 ) {
+    val isEditingGeneratedSummary = state.editingRollupId != null
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -701,11 +711,19 @@ private fun ComposeScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text(
-            if (state.editingNoteId == null) "Capture a note" else "Edit note",
+            when {
+                isEditingGeneratedSummary -> "Edit generated summary"
+                state.editingNoteId == null -> "Capture a note"
+                else -> "Edit note"
+            },
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            "Notes stay local. Tags help with note-level narrowing, and rollups rebuild from the dirty checkpoint forward.",
+            if (isEditingGeneratedSummary) {
+                "This edits the stored generated summary document directly. A future Update or Rebuild can overwrite your changes."
+            } else {
+                "Notes stay local. Tags help with note-level narrowing, and rollups rebuild from the dirty checkpoint forward."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -720,7 +738,8 @@ private fun ComposeScreen(
             value = state.composeDate,
             onValueChange = onDateChange,
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Date") },
+            enabled = !isEditingGeneratedSummary,
+            label = { Text(if (isEditingGeneratedSummary) "Period start" else "Date") },
             placeholder = { Text("YYYY-MM-DD") },
             singleLine = true,
         )
@@ -733,39 +752,53 @@ private fun ComposeScreen(
             label = { Text("Body") },
             minLines = 10,
         )
-        Text("Tags", style = MaterialTheme.typography.titleMedium)
-        if (state.labels.isEmpty()) {
-            Text(
-                "Create reusable tags in Summarize, then come back here to apply them.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                state.labels.forEach { label ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onToggleLabel(label.id) },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        val selected = label.id in state.composeSelectedLabelIds
-                        Checkbox(
-                            checked = selected,
-                            onCheckedChange = null,
-                        )
-                        Text(text = label.name, modifier = Modifier.weight(1f))
+        if (!isEditingGeneratedSummary) {
+            Text("Tags", style = MaterialTheme.typography.titleMedium)
+            if (state.labels.isEmpty()) {
+                Text(
+                    "Create reusable tags in Summarize, then come back here to apply them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    state.labels.forEach { label ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleLabel(label.id) },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            val selected = label.id in state.composeSelectedLabelIds
+                            Checkbox(
+                                checked = selected,
+                                onCheckedChange = null,
+                            )
+                            Text(text = label.name, modifier = Modifier.weight(1f))
+                        }
                     }
                 }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onSave) {
-                Text(if (state.editingNoteId == null) "Save note" else "Update note")
+                Text(
+                    when {
+                        isEditingGeneratedSummary -> "Update summary"
+                        state.editingNoteId == null -> "Save note"
+                        else -> "Update note"
+                    },
+                )
             }
             OutlinedButton(onClick = onClear) {
-                Text(if (state.editingNoteId == null) "Clear" else "Cancel edit")
+                Text(
+                    if (state.editingNoteId == null && !isEditingGeneratedSummary) {
+                        "Clear"
+                    } else {
+                        "Cancel edit"
+                    },
+                )
             }
         }
     }

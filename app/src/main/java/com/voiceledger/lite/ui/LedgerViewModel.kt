@@ -66,6 +66,7 @@ data class LedgerUiState(
     val selectedRollupId: String? = null,
     val createdNotesSourceFilterNoteIds: Set<Long>? = null,
     val editingNoteId: Long? = null,
+    val editingRollupId: String? = null,
     val composeTitle: String = "",
     val composeBody: String = "",
     val composeDate: String = defaultComposeDate(),
@@ -309,6 +310,7 @@ class LedgerViewModel(
             it.copy(
                 selectedTab = AppTab.COMPOSE,
                 editingNoteId = note.note.id,
+                editingRollupId = null,
                 composeTitle = note.note.title,
                 composeBody = note.note.body,
                 composeDate = formatComposeDate(note.note.createdAtEpochMs),
@@ -318,10 +320,28 @@ class LedgerViewModel(
         }
     }
 
+    fun loadRollupIntoComposer(rollup: RollupSnapshot) {
+        _uiState.update {
+            it.copy(
+                selectedTab = AppTab.COMPOSE,
+                editingNoteId = null,
+                editingRollupId = rollup.id,
+                composeTitle = rollup.title,
+                composeBody = rollup.overview,
+                composeDate = formatComposeDate(rollup.periodStartEpochMs),
+                composeSelectedLabelIds = emptySet(),
+                selectedRollupId = rollup.id,
+                notesDocumentLayer = NotesDocumentLayer.GENERATED,
+                generatedGranularity = rollup.granularity,
+            )
+        }
+    }
+
     fun clearComposer() {
         _uiState.update {
             it.copy(
                 editingNoteId = null,
+                editingRollupId = null,
                 composeTitle = "",
                 composeBody = "",
                 composeDate = defaultComposeDate(),
@@ -334,47 +354,77 @@ class LedgerViewModel(
         val current = _uiState.value
         val body = current.composeBody.trim()
         if (body.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Body is required before you save a note.") }
+            _uiState.update { it.copy(errorMessage = "Body is required before you save.") }
             return
         }
         val title = current.composeTitle.trim().ifBlank {
             body.lineSequence().firstOrNull()?.take(48) ?: "Untitled note"
         }
-        val createdAtEpochMs = runCatching {
-            LocalDate.parse(current.composeDate.trim())
-                .atStartOfDay(ZoneId.systemDefault())
-                .toInstant()
-                .toEpochMilli()
-        }.getOrElse {
-            _uiState.update { state ->
-                state.copy(errorMessage = "Date must use YYYY-MM-DD.")
-            }
-            return
-        }
-
         viewModelScope.launch {
-            val savedId = repository.saveNote(
-                noteId = current.editingNoteId,
-                title = title,
-                body = body,
-                labelIds = current.composeSelectedLabelIds,
-                createdAtEpochMs = createdAtEpochMs,
-            )
-            _uiState.update {
-                it.copy(
-                    selectedTab = AppTab.NOTES,
-                    selectedNoteId = savedId,
-                    editingNoteId = null,
-                    composeTitle = "",
-                    composeBody = "",
-                    composeDate = defaultComposeDate(),
-                    composeSelectedLabelIds = emptySet(),
-                    infoMessage = if (current.editingNoteId == null) {
-                        "Note saved locally. Aggregation is now dirty from this note onward."
-                    } else {
-                        "Note updated. Dependent rollups will be rebuilt locally."
-                    },
-                )
+            runCatching {
+                if (current.editingRollupId != null) {
+                    val updated = coordinator.updateRollupDocument(
+                        rollupId = current.editingRollupId,
+                        title = title,
+                        overview = body,
+                    )
+                    _uiState.update {
+                        it.copy(
+                            selectedTab = AppTab.NOTES,
+                            notesDocumentLayer = NotesDocumentLayer.GENERATED,
+                            generatedGranularity = updated.granularity,
+                            selectedRollupId = updated.id,
+                            editingNoteId = null,
+                            editingRollupId = null,
+                            composeTitle = "",
+                            composeBody = "",
+                            composeDate = defaultComposeDate(),
+                            composeSelectedLabelIds = emptySet(),
+                            infoMessage = "Generated summary updated locally. A future Update or Rebuild can overwrite this edit.",
+                        )
+                    }
+                } else {
+                    val createdAtEpochMs = runCatching {
+                        LocalDate.parse(current.composeDate.trim())
+                            .atStartOfDay(ZoneId.systemDefault())
+                            .toInstant()
+                            .toEpochMilli()
+                    }.getOrElse {
+                        _uiState.update { state ->
+                            state.copy(errorMessage = "Date must use YYYY-MM-DD.")
+                        }
+                        return@launch
+                    }
+
+                    val savedId = repository.saveNote(
+                        noteId = current.editingNoteId,
+                        title = title,
+                        body = body,
+                        labelIds = current.composeSelectedLabelIds,
+                        createdAtEpochMs = createdAtEpochMs,
+                    )
+                    _uiState.update {
+                        it.copy(
+                            selectedTab = AppTab.NOTES,
+                            selectedNoteId = savedId,
+                            editingNoteId = null,
+                            editingRollupId = null,
+                            composeTitle = "",
+                            composeBody = "",
+                            composeDate = defaultComposeDate(),
+                            composeSelectedLabelIds = emptySet(),
+                            infoMessage = if (current.editingNoteId == null) {
+                                "Note saved locally. Aggregation is now dirty from this note onward."
+                            } else {
+                                "Note updated. Dependent rollups will be rebuilt locally."
+                            },
+                        )
+                    }
+                }
+            }.onFailure { exception ->
+                _uiState.update {
+                    it.copy(errorMessage = exception.message ?: "Save failed.")
+                }
             }
         }
     }

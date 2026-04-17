@@ -15,10 +15,16 @@ class LocalSummaryEngine(
 
     fun openSummarizer(settings: LocalAiSettings): PreparedSummarizer {
         val normalized = settings.normalized()
-        val model = LocalModelLocator.resolveSummaryModel(context, normalized) ?: return HeuristicSummarizer()
+        val model = LocalModelLocator.resolveSummaryModel(context, normalized)
+            ?: error("Summary model is not installed.")
         val session = runCatching {
             liteRtLmEngine.openSession(model = model, settings = normalized)
-        }.getOrNull() ?: return HeuristicSummarizer()
+        }.getOrElse { exception ->
+            throw IllegalStateException(
+                "Summary model ${model.label} failed to initialize.",
+                exception,
+            )
+        }
         return ModelSummarizer(
             session = session,
             model = model,
@@ -78,25 +84,17 @@ class LocalSummaryEngine(
                 "Prompt built for ${granularity.name.lowercase()} ${formatDateRange(periodStartEpochMs, periodEndEpochMs)} (${prompt.length} chars)",
             )
             onDiagnostic("Calling local LiteRT-LM conversation.sendMessage")
-            val rawResponse = runCatching { session.generate(prompt) }.getOrNull()
-            if (rawResponse == null) {
-                onDiagnostic("LiteRT-LM inference failed; falling back to built-in summarizer")
-                return HeuristicSummarizer().summarize(
-                    documents = documents,
-                    granularity = granularity,
-                    periodStartEpochMs = periodStartEpochMs,
-                    periodEndEpochMs = periodEndEpochMs,
+            val rawResponse = runCatching { session.generate(prompt) }.getOrElse { exception ->
+                throw IllegalStateException(
+                    "LiteRT-LM inference failed for ${granularity.name.lowercase()} ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.",
+                    exception,
                 )
             }
             onDiagnostic("LiteRT-LM returned ${rawResponse.length} chars")
             val overview = sanitizeGeneratedSummary(rawResponse)
             if (overview.isBlank()) {
-                onDiagnostic("LiteRT-LM returned no usable text; falling back to built-in summarizer")
-                return HeuristicSummarizer().summarize(
-                    documents = documents,
-                    granularity = granularity,
-                    periodStartEpochMs = periodStartEpochMs,
-                    periodEndEpochMs = periodEndEpochMs,
+                throw IllegalStateException(
+                    "LiteRT-LM returned no usable summary text for ${granularity.name.lowercase()} ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.",
                 )
             }
             onDiagnostic("Summary response normalized successfully")
@@ -111,42 +109,6 @@ class LocalSummaryEngine(
 
         override fun close() {
             session.close()
-        }
-    }
-
-    private inner class HeuristicSummarizer : PreparedSummarizer {
-        override suspend fun summarize(
-            documents: List<SemanticDocument>,
-            granularity: RollupGranularity,
-            periodStartEpochMs: Long,
-            periodEndEpochMs: Long,
-            onDiagnostic: suspend (String) -> Unit,
-        ): AggregateInsight {
-            val rangeLabel = formatDateRange(periodStartEpochMs, periodEndEpochMs)
-            val overview = buildString {
-                append("Summary for $rangeLabel based on ${documents.size} source item(s).")
-                val sampleLines = documents
-                    .sortedByDescending(SemanticDocument::createdAtEpochMs)
-                    .take(3)
-                    .mapNotNull { document ->
-                        val excerpt = document.body.replace('\n', ' ').trim().take(120).trimEnd()
-                        excerpt.takeIf(String::isNotBlank)?.let { line ->
-                            "${document.title.ifBlank { "Untitled" }}: $line"
-                        }
-                    }
-                if (sampleLines.isNotEmpty()) {
-                    append(' ')
-                    append(sampleLines.joinToString(" "))
-                }
-            }
-
-            return AggregateInsight(
-                modelLabel = "Built-in local summarizer (fallback)",
-                title = defaultTitle(granularity, periodStartEpochMs, periodEndEpochMs),
-                overview = overview,
-                highlights = emptyList(),
-                themes = emptyList(),
-            )
         }
     }
 

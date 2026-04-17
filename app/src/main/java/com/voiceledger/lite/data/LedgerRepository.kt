@@ -339,8 +339,31 @@ class LedgerRepository(
         return rollupDao.observeAllOnce().map(::toRollupSnapshot)
     }
 
+    suspend fun getRollup(rollupId: String): RollupSnapshot? {
+        return rollupDao.getById(rollupId)?.let(::toRollupSnapshot)
+    }
+
     suspend fun rollupsByGranularity(granularity: RollupGranularity): List<RollupSnapshot> {
         return rollupDao.byGranularityAscending(granularity.name).map(::toRollupSnapshot)
+    }
+
+    suspend fun updateRollupContent(
+        rollupId: String,
+        title: String,
+        overview: String,
+    ): RollupSnapshot {
+        val cleanedTitle = title.trim()
+        val cleanedOverview = overview.trim()
+        return database.withTransaction {
+            val existing = rollupDao.getById(rollupId)
+                ?: error("That generated summary no longer exists.")
+            val updated = existing.copy(
+                title = cleanedTitle,
+                overview = cleanedOverview,
+            )
+            rollupDao.replace(updated)
+            toRollupSnapshot(updated)
+        }
     }
 
     suspend fun replaceSemanticEntry(entry: SemanticEntryEntity) {

@@ -194,6 +194,37 @@ class LocalAggregationCoordinator(
         }
     }
 
+    suspend fun updateRollupDocument(
+        rollupId: String,
+        title: String,
+        overview: String,
+    ): RollupSnapshot = withContext(Dispatchers.IO) {
+        val updatedRollup = repository.updateRollupContent(
+            rollupId = rollupId,
+            title = title,
+            overview = overview,
+        )
+        val settings = settingsStore.load().normalized()
+        embeddingEngine.openEmbedder(settings).use { embedder ->
+            val embedding = embedder.embed("${updatedRollup.title}\n${updatedRollup.overview}")
+            repository.replaceSemanticEntry(
+                SemanticEntryEntity(
+                    entryId = "rollup:${updatedRollup.id}",
+                    kind = "rollup",
+                    sourceId = updatedRollup.id,
+                    title = updatedRollup.title,
+                    body = updatedRollup.overview.take(220),
+                    noteId = updatedRollup.noteIds.firstOrNull(),
+                    rollupId = updatedRollup.id,
+                    granularity = updatedRollup.granularity.name,
+                    embeddingJson = json.encodeToString(embedding.toList()),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+        }
+        updatedRollup
+    }
+
     suspend fun search(query: String, labelIds: Set<Long> = emptySet()): SemanticSearchResponse = withContext(Dispatchers.IO) {
         val normalized = query.trim()
         if (normalized.isBlank()) {
