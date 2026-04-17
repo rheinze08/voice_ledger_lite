@@ -61,7 +61,9 @@ class AggregationWorker(
                 if (exception is CancellationException) throw exception
                 val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
                 if (cause is CancellationException) throw cause
-                val message = cause.message ?: exception.message ?: "Summary rebuild failed."
+                val message = cause.message?.takeIf { it.isNotBlank() }
+                    ?: exception.message?.takeIf { it.isNotBlank() }
+                    ?: "${cause.javaClass.simpleName} (no details available)"
                 if (isManualTrigger) {
                     Result.failure(AggregationScheduler.failureData(message, rebuildFromStartDate))
                 } else {
