@@ -219,8 +219,8 @@ class LocalSummaryEngine(
         private val EXCESS_BLANK_LINE_REGEX = Regex("\\n{3,}")
         private const val MIN_SOURCE_BODY_CHARS = 180
         private const val MAX_SOURCE_BODY_CHARS = 800
-        private const val MIN_SUMMARY_TOKENS = 1024
-        private const val MAX_SUMMARY_TOKENS = 4096
+        private const val MIN_SUMMARY_TOKENS = 512
+        private const val MAX_SUMMARY_TOKENS = 512
         private const val SUMMARY_TOP_K = 8
     }
 }
