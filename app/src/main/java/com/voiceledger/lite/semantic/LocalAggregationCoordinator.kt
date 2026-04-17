@@ -136,13 +136,17 @@ class LocalAggregationCoordinator(
                     } catch (exception: Exception) {
                         if (exception is CancellationException) throw exception
                         val refreshedCheckpoint = repository.checkpoint(granularity)
+                        val errorDetail = buildString {
+                            append(exception.javaClass.simpleName)
+                            exception.message?.takeIf { it.isNotBlank() }?.let { append(": $it") }
+                        }
                         repository.updateCheckpoint(
                             refreshedCheckpoint.copy(
                                 lastRunFinishedEpochMs = System.currentTimeMillis(),
-                                lastError = exception.message ?: "Aggregation failed.",
+                                lastError = errorDetail,
                             ),
                         )
-                        throw exception
+                        throw RuntimeException("${granularity.displayLabel()} summaries failed — $errorDetail", exception)
                     }
 
                     dailySources = repository.rollupsByGranularity(granularity).map { rollup ->
