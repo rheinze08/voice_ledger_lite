@@ -137,8 +137,16 @@ class LocalAggregationCoordinator(
                         if (exception is CancellationException) throw exception
                         val refreshedCheckpoint = repository.checkpoint(granularity)
                         val errorDetail = buildString {
-                            append(exception.javaClass.simpleName)
-                            exception.message?.takeIf { it.isNotBlank() }?.let { append(": $it") }
+                            var current: Throwable? = exception
+                            var depth = 0
+                            while (current != null && depth < 5) {
+                                if (depth > 0) append(" → ")
+                                append(current.javaClass.simpleName)
+                                current.message?.takeIf { it.isNotBlank() }?.let { append(": $it") }
+                                val next = current.cause
+                                current = if (next != null && next !== current) next else null
+                                depth++
+                            }
                         }
                         repository.updateCheckpoint(
                             refreshedCheckpoint.copy(
