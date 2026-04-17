@@ -653,15 +653,13 @@ private fun RollupGranularity.displayLabel(): String {
 }
 
 private fun summarySourceLimit(granularity: RollupGranularity, configuredMaxSources: Int): Int {
-    // Hard caps are sized to match totalBodyBudget in LocalSummaryEngine. The compiled
-    // Gemma 4 E2B model has a 512-token context; exceeding it causes a JNI inference failure.
-    // DAILY notes can have long bodies → cap at 3 (3 × 180 body chars = 540 budget).
-    // Higher-granularity sources are already-summarized text with short titles → cap at 4.
+    // Hard caps are sized to match totalBodyBudget in LocalSummaryEngine. With a 2048-token
+    // context window, the 4000-char body budget supports up to 8 sources at ~500 chars each.
     val hardCap = when (granularity) {
-        RollupGranularity.DAILY -> 3
-        RollupGranularity.WEEKLY -> 4
-        RollupGranularity.MONTHLY -> 4
-        RollupGranularity.YEARLY -> 4
+        RollupGranularity.DAILY -> 8
+        RollupGranularity.WEEKLY -> 8
+        RollupGranularity.MONTHLY -> 8
+        RollupGranularity.YEARLY -> 8
     }
     return configuredMaxSources.coerceAtMost(hardCap)
 }

@@ -185,19 +185,18 @@ class LocalSummaryEngine(
     }
 
     private fun totalBodyBudget(granularity: RollupGranularity): Int {
-        // The compiled Gemma 4 E2B model has a 512-token context window (input + output).
-        // With 96 tokens reserved for output and ~15 for special tokens, the input budget
-        // is ~401 tokens ≈ 1200 chars at 3 chars/token (worst-case mixed content).
-        // These values are sized so that total prompts (body + ~60-char-capped titles +
-        // timestamps + instruction text) stay well under that limit.
+        // Gemma 4 E2B context window is 2048 tokens (input + output).
+        // With 256 tokens reserved for output and ~20 for special tokens, the input budget
+        // is ~1772 tokens ≈ 5000 chars at 3 chars/token (worst-case mixed content).
+        // 4000-char body budget leaves ~1000 chars for instruction text, titles, and
+        // timestamps, keeping total prompts well within the 5000-char input ceiling.
         return when (granularity) {
-            // 3 docs × 180 chars = 540; total prompt ~950–1050 chars ≈ 300–350 input tokens
-            RollupGranularity.DAILY -> 540
-            // 4 docs × 180 chars = 720; daily-summary titles are short (~27 chars)
-            // so total prompt ~1150–1200 chars ≈ 340–400 input tokens
-            RollupGranularity.WEEKLY -> 720
-            RollupGranularity.MONTHLY -> 720
-            RollupGranularity.YEARLY -> 720
+            // 8 docs × 500 chars = 4000; total prompt ~4700 chars ≈ 1567 input tokens
+            RollupGranularity.DAILY -> 4000
+            // Higher-granularity sources are already-summarized text; same body budget
+            RollupGranularity.WEEKLY -> 4000
+            RollupGranularity.MONTHLY -> 4000
+            RollupGranularity.YEARLY -> 4000
         }
     }
 
@@ -218,9 +217,9 @@ class LocalSummaryEngine(
         private val CONTROL_CHAR_REGEX = Regex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]")
         private val EXCESS_BLANK_LINE_REGEX = Regex("\\n{3,}")
         private const val MIN_SOURCE_BODY_CHARS = 180
-        private const val MAX_SOURCE_BODY_CHARS = 800
+        private const val MAX_SOURCE_BODY_CHARS = 1500
         private const val MIN_SUMMARY_TOKENS = 512
-        private const val MAX_SUMMARY_TOKENS = 512
+        private const val MAX_SUMMARY_TOKENS = 2048
         private const val SUMMARY_TOP_K = 8
     }
 }
