@@ -112,7 +112,6 @@ object AggregationScheduler {
         val message = when (work.state) {
             WorkInfo.State.SUCCEEDED -> work.outputData.getString(KEY_RESULT_MESSAGE)
             WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> work.outputData.getString(KEY_ERROR_MESSAGE)
-                ?: "Summary rebuild failed."
             else -> null
         }
         return AggregationImmediateResult(

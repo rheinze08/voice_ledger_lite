@@ -621,6 +621,18 @@ class LedgerViewModel(
             } else {
                 null
             }
+            val isTerminalFailure = shouldHandleTerminal &&
+                terminalResult != null &&
+                terminalResult.state != androidx.work.WorkInfo.State.SUCCEEDED
+            val checkpointErrorMessage: String? = if (isTerminalFailure && terminalResult?.message == null) {
+                RollupGranularity.entries.mapNotNull { granularity ->
+                    repository.checkpoint(granularity).lastError?.let { err ->
+                        "${granularity.name.lowercase().replaceFirstChar { it.uppercase() }}: $err"
+                    }
+                }.joinToString("; ").takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
             _uiState.update { state ->
                 state.copy(
                     settings = if (shouldHandleTerminal) settingsStore.load() else state.settings,
@@ -641,7 +653,9 @@ class LedgerViewModel(
                                 androidx.work.WorkInfo.State.SUCCEEDED ->
                                     terminalResult.message ?: "Summaries and semantic search index refreshed."
                                 else ->
-                                    terminalResult.message ?: "Local aggregation failed."
+                                    terminalResult.message
+                                        ?: checkpointErrorMessage
+                                        ?: "Summary rebuild failed."
                             }
                             add(finalMsg)
                         }
@@ -657,10 +671,10 @@ class LedgerViewModel(
                         else -> state.infoMessage
                     },
                     errorMessage = when {
-                        shouldHandleTerminal &&
-                            terminalResult?.state != null &&
-                            terminalResult.state != androidx.work.WorkInfo.State.SUCCEEDED ->
-                            terminalResult.message ?: "Local aggregation failed."
+                        isTerminalFailure ->
+                            terminalResult!!.message
+                                ?: checkpointErrorMessage
+                                ?: "Summary rebuild failed."
                         else -> state.errorMessage
                     },
                 )
