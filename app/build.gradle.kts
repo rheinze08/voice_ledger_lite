@@ -45,6 +45,7 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += "-Xskip-metadata-version-check"
     }
 
     buildFeatures {
@@ -78,7 +79,7 @@ dependencies {
     implementation("androidx.work:work-multiprocess:2.9.1")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    implementation("com.google.mediapipe:tasks-genai:0.10.33")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
     implementation("com.google.mediapipe:tasks-text:0.10.33")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

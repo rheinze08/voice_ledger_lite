@@ -14,6 +14,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.CancellationException
@@ -70,14 +71,15 @@ class LocalAggregationCoordinator(
             notes.filter { note -> note.createdAtEpochMs >= floor }
         }.orEmpty()
 
-        embeddingEngine.openEmbedder(settings).use { embedder ->
-            if (notesToReindex.isNotEmpty()) {
+        if (notesToReindex.isNotEmpty()) {
+            embeddingEngine.openEmbedder(settings).use { embedder ->
                 onProgress("Reindexing ${notesToReindex.size} note(s)")
                 reindexNotes(notesToReindex, embedder)
             }
+        }
 
-            summaryEngine.openSummarizer(settings).use { summarizer ->
-                var dailySources = notes.map { note ->
+        summaryEngine.openSummarizer(settings).use { summarizer ->
+            var dailySources = notes.map { note ->
                     SemanticDocument(
                         sourceId = "note:${note.id}",
                         title = note.title,
@@ -121,8 +123,8 @@ class LocalAggregationCoordinator(
                             floorEpochMs = effectiveFloor,
                             maxSourcesPerRollup = summarySourceLimit(granularity, settings.maxSourcesPerRollup),
                             summarizer = summarizer,
-                            embedder = embedder,
                             runReferenceEpochMs = runReferenceEpochMs,
+                            onProgress = onProgress,
                         )
                         val refreshedCheckpoint = repository.checkpoint(granularity)
                         repository.updateCheckpoint(
@@ -167,6 +169,13 @@ class LocalAggregationCoordinator(
                         )
                     }
                 }
+            }
+
+        embeddingEngine.openEmbedder(settings).use { embedder ->
+            val rollups = repository.allRollups()
+            if (rollups.isNotEmpty()) {
+                onProgress("Refreshing ${rollups.size} rollup embedding(s)")
+                reindexRollups(rollups, embedder)
             }
         }
 
@@ -367,14 +376,37 @@ class LocalAggregationCoordinator(
         }
     }
 
+    private suspend fun reindexRollups(
+        rollups: List<RollupSnapshot>,
+        embedder: LocalEmbeddingEngine.PreparedEmbedder,
+    ) {
+        rollups.forEach { rollup ->
+            val rollupEmbedding = embedder.embed("${rollup.title}\n${rollup.overview}")
+            repository.replaceSemanticEntry(
+                SemanticEntryEntity(
+                    entryId = "rollup:${rollup.id}",
+                    kind = "rollup",
+                    sourceId = rollup.id,
+                    title = rollup.title,
+                    body = rollup.overview.take(220),
+                    noteId = rollup.noteIds.firstOrNull(),
+                    rollupId = rollup.id,
+                    granularity = rollup.granularity.name,
+                    embeddingJson = json.encodeToString(rollupEmbedding.toList()),
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
     private suspend fun processGranularity(
         granularity: RollupGranularity,
         sourceDocuments: List<SemanticDocument>,
         floorEpochMs: Long,
         maxSourcesPerRollup: Int,
         summarizer: LocalSummaryEngine.PreparedSummarizer,
-        embedder: LocalEmbeddingEngine.PreparedEmbedder,
         runReferenceEpochMs: Long,
+        onProgress: suspend (String) -> Unit,
     ): Long? {
         val floorStart = startOfPeriod(floorEpochMs, granularity)
         val existingBucketStarts = repository.rollupsByGranularity(granularity)
@@ -408,12 +440,25 @@ class LocalAggregationCoordinator(
                 return@forEach
             }
 
-            val insight = summarizer.summarize(
-                documents = docsForSummary,
-                granularity = granularity,
-                periodStartEpochMs = bucketStart,
-                periodEndEpochMs = bucketEnd,
-            )
+            val bucketLabel = "${granularity.displayLabel()} ${formatBucketLabel(bucketStart, granularity)}"
+            onProgress("$bucketLabel: ${bucketDocuments.size} source item(s), ${docsForSummary.size} sent to the LLM")
+
+            val insight = runCatching {
+                summarizer.summarize(
+                    documents = docsForSummary,
+                    granularity = granularity,
+                    periodStartEpochMs = bucketStart,
+                    periodEndEpochMs = bucketEnd,
+                    onDiagnostic = { diagnostic ->
+                        onProgress("$bucketLabel - $diagnostic")
+                    },
+                )
+            }.getOrElse { exception ->
+                throw IllegalStateException(
+                    "$bucketLabel failed while summarizing ${docsForSummary.size} source item(s).",
+                    exception,
+                )
+            }
             val noteIds = bucketDocuments.flatMap(SemanticDocument::noteIds).distinct()
 
             repository.replaceRollup(
@@ -424,24 +469,6 @@ class LocalAggregationCoordinator(
                 sourceCount = bucketDocuments.size,
                 insight = insight,
                 noteIds = noteIds,
-            )
-
-            val rollupEmbedding = embedder.embed(
-                "${insight.title}\n${insight.overview}",
-            )
-            repository.replaceSemanticEntry(
-                SemanticEntryEntity(
-                    entryId = "rollup:$rollupId",
-                    kind = "rollup",
-                    sourceId = rollupId,
-                    title = insight.title,
-                    body = insight.overview.take(220),
-                    noteId = noteIds.firstOrNull(),
-                    rollupId = rollupId,
-                    granularity = granularity.name,
-                    embeddingJson = json.encodeToString(rollupEmbedding.toList()),
-                    updatedAtEpochMs = System.currentTimeMillis(),
-                ),
             )
             lastProcessedEnd = min(bucketEnd, runReferenceEpochMs)
         }
@@ -602,6 +629,16 @@ private fun summarySourceLimit(granularity: RollupGranularity, configuredMaxSour
         RollupGranularity.YEARLY -> 6
     }
     return configuredMaxSources.coerceAtMost(hardCap)
+}
+
+private fun formatBucketLabel(bucketStartEpochMs: Long, granularity: RollupGranularity): String {
+    val formatter = when (granularity) {
+        RollupGranularity.DAILY -> DateTimeFormatter.ofPattern("MMM d, yyyy")
+        RollupGranularity.WEEKLY -> DateTimeFormatter.ofPattern("MMM d, yyyy")
+        RollupGranularity.MONTHLY -> DateTimeFormatter.ofPattern("MMM yyyy")
+        RollupGranularity.YEARLY -> DateTimeFormatter.ofPattern("yyyy")
+    }.withZone(ZoneId.systemDefault())
+    return formatter.format(Instant.ofEpochMilli(bucketStartEpochMs))
 }
 
 private data class DecodedEntry(
