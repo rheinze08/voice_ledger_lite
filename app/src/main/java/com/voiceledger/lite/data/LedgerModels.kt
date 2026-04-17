@@ -131,7 +131,7 @@ data class LocalAiSettings(
     val maxSourcesPerRollup: Int = 8,
     val embeddingDimensions: Int = 192,
     val searchResultLimit: Int = 8,
-    val maxTokens: Int = 512,
+    val maxTokens: Int = 2048,
     val topK: Int = 24,
     val temperature: Float = 0.2f,
     val backgroundProcessingEnabled: Boolean = true,
@@ -149,7 +149,7 @@ data class LocalAiSettings(
             maxSourcesPerRollup = maxSourcesPerRollup.coerceIn(4, 12),
             embeddingDimensions = embeddingDimensions.coerceIn(32, 768),
             searchResultLimit = searchResultLimit.coerceIn(3, 20),
-            maxTokens = maxTokens.coerceIn(256, 768),
+            maxTokens = maxTokens.coerceIn(512, 4096),
             topK = topK.coerceIn(1, 32),
             temperature = temperature.coerceIn(0f, 1f),
         )

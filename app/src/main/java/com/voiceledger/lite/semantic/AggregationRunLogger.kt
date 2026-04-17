@@ -2,8 +2,6 @@ package com.voiceledger.lite.semantic
 
 import android.content.Context
 import java.io.File
-import java.io.PrintWriter
-import java.io.StringWriter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -34,7 +32,7 @@ class AggregationRunLogger(context: Context) {
 
     fun appendThrowable(prefix: String, throwable: Throwable) {
         writeLine(prefix.trim())
-        writeRaw(stackTraceString(throwable))
+        writeRaw(expandedThrowableString(throwable))
     }
 
     fun snapshot(maxLines: Int = DEFAULT_TAIL_LINES): AggregationLogSnapshot {
@@ -71,19 +69,36 @@ class AggregationRunLogger(context: Context) {
             ?.forEach(File::delete)
     }
 
-    private fun stackTraceString(throwable: Throwable): String {
-        val writer = StringWriter()
-        PrintWriter(writer).use { printWriter ->
-            throwable.printStackTrace(printWriter)
+    private fun expandedThrowableString(throwable: Throwable): String {
+        val builder = StringBuilder()
+        var current: Throwable? = throwable
+        var depth = 0
+        while (current != null) {
+            if (depth > 0) {
+                builder.append("Caused by: ")
+            }
+            builder.append(current::class.java.name)
+            current.message?.takeIf { it.isNotBlank() }?.let {
+                builder.append(": ")
+                builder.append(it)
+            }
+            builder.append('\n')
+            current.stackTrace.forEach { element ->
+                builder.append("\tat ")
+                builder.append(element.toString())
+                builder.append('\n')
+            }
+            current = current.cause?.takeIf { it !== current }
+            depth++
         }
-        return writer.toString()
+        return builder.toString()
     }
 
     companion object {
         private const val LOG_DIRECTORY = "logs/aggregation"
         private const val LATEST_LOG_FILE = "latest.log"
         private const val MAX_HISTORY_FILES = 8
-        private const val DEFAULT_TAIL_LINES = 20
+        private const val DEFAULT_TAIL_LINES = 80
         private val FILE_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault())
         private val LINE_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault())
     }

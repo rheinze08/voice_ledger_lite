@@ -27,7 +27,7 @@ class LocalLiteRtLmEngine(private val context: Context) {
                     EngineConfig(
                         modelPath = model.path,
                         backend = backend,
-                        maxNumTokens = normalized.maxTokens.coerceAtMost(MAX_NUM_TOKENS),
+                        maxNumTokens = normalized.maxTokens.coerceIn(MIN_NUM_TOKENS, MAX_NUM_TOKENS),
                         cacheDir = cacheDirectory.absolutePath,
                     ),
                 )
@@ -98,7 +98,8 @@ class LocalLiteRtLmEngine(private val context: Context) {
 
     companion object {
         private const val DEFAULT_TOP_P = 0.95
-        private const val MAX_NUM_TOKENS = 512
+        private const val MIN_NUM_TOKENS = 512
+        private const val MAX_NUM_TOKENS = 4096
         private const val MAX_TOP_K = 32
     }
 }

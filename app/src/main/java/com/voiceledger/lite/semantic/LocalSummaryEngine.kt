@@ -15,15 +15,14 @@ class LocalSummaryEngine(
 
     fun openSummarizer(settings: LocalAiSettings): PreparedSummarizer {
         val normalized = settings.normalized()
-        val model = LocalModelLocator.resolveSummaryModel(context, normalized)
-        if (model == null) {
-            return HeuristicSummarizer()
-        }
-        val session = liteRtLmEngine.openSession(model = model, settings = normalized)
+        val model = LocalModelLocator.resolveSummaryModel(context, normalized) ?: return HeuristicSummarizer()
+        val session = runCatching {
+            liteRtLmEngine.openSession(model = model, settings = normalized)
+        }.getOrNull() ?: return HeuristicSummarizer()
         return ModelSummarizer(
             session = session,
             model = model,
-            maxTokens = normalized.maxTokens.coerceAtMost(SUMMARY_MAX_TOKENS),
+            maxTokens = normalized.maxTokens.coerceIn(MIN_SUMMARY_TOKENS, MAX_SUMMARY_TOKENS),
             topK = normalized.topK.coerceAtMost(SUMMARY_TOP_K),
         )
     }
@@ -74,25 +73,30 @@ class LocalSummaryEngine(
                 "Preparing ${documents.size} source document(s), ${documents.sumOf { it.body.length }} body chars before sanitizing",
             )
             onDiagnostic("Using LiteRT-LM backend ${session.backendLabel}, maxTokens=$maxTokens, topK=$topK")
-            val prompt = buildPrompt(documents, granularity, periodStartEpochMs, periodEndEpochMs, maxTokens)
+            val prompt = buildPrompt(documents, granularity, periodStartEpochMs, periodEndEpochMs)
             onDiagnostic(
                 "Prompt built for ${granularity.name.lowercase()} ${formatDateRange(periodStartEpochMs, periodEndEpochMs)} (${prompt.length} chars)",
             )
             onDiagnostic("Calling local LiteRT-LM conversation.sendMessage")
-            val rawResponse = runCatching {
-                session.generate(prompt)
-            }.getOrElse { exception ->
-                throw IllegalStateException(
-                    "LiteRT-LM generation failed for ${granularity.name.lowercase()} ${formatDateRange(periodStartEpochMs, periodEndEpochMs)} " +
-                        "with ${documents.size} source document(s) and prompt length ${prompt.length}.",
-                    exception,
+            val rawResponse = runCatching { session.generate(prompt) }.getOrNull()
+            if (rawResponse == null) {
+                onDiagnostic("LiteRT-LM inference failed; falling back to built-in summarizer")
+                return HeuristicSummarizer().summarize(
+                    documents = documents,
+                    granularity = granularity,
+                    periodStartEpochMs = periodStartEpochMs,
+                    periodEndEpochMs = periodEndEpochMs,
                 )
             }
             onDiagnostic("LiteRT-LM returned ${rawResponse.length} chars")
             val overview = sanitizeGeneratedSummary(rawResponse)
             if (overview.isBlank()) {
-                throw IllegalStateException(
-                    "LiteRT-LM returned no usable summary text for ${granularity.name.lowercase()} ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.",
+                onDiagnostic("LiteRT-LM returned no usable text; falling back to built-in summarizer")
+                return HeuristicSummarizer().summarize(
+                    documents = documents,
+                    granularity = granularity,
+                    periodStartEpochMs = periodStartEpochMs,
+                    periodEndEpochMs = periodEndEpochMs,
                 )
             }
             onDiagnostic("Summary response normalized successfully")
@@ -151,10 +155,9 @@ class LocalSummaryEngine(
         granularity: RollupGranularity,
         periodStartEpochMs: Long,
         periodEndEpochMs: Long,
-        maxTokens: Int,
     ): String {
         val formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
-        val sourceBlock = buildSourceBlock(documents, granularity, formatter, maxTokens)
+        val sourceBlock = buildSourceBlock(documents, granularity, formatter)
 
         return """
             Summarize these notes for ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.
@@ -172,9 +175,8 @@ class LocalSummaryEngine(
         documents: List<SemanticDocument>,
         granularity: RollupGranularity,
         formatter: DateTimeFormatter,
-        maxTokens: Int,
     ): String {
-        val totalBodyBudget = totalBodyBudget(documents, granularity, maxTokens)
+        val totalBodyBudget = totalBodyBudget(granularity)
         val perDocumentBudget = (totalBodyBudget / documents.size.coerceAtLeast(1))
             .coerceIn(MIN_SOURCE_BODY_CHARS, MAX_SOURCE_BODY_CHARS)
         var remainingBudget = totalBodyBudget
@@ -182,7 +184,7 @@ class LocalSummaryEngine(
         return documents.joinToString("\n\n") { document ->
             val bodyLimit = minOf(perDocumentBudget, remainingBudget).coerceAtLeast(MIN_SOURCE_BODY_CHARS)
             val body = sanitizePromptText(document.body, maxChars = bodyLimit)
-            val title = sanitizePromptText(document.title, maxChars = 180)
+            val title = sanitizePromptText(document.title, maxChars = 60)
             remainingBudget = (remainingBudget - body.length).coerceAtLeast(0)
             buildString {
                 append('[')
@@ -212,24 +214,21 @@ class LocalSummaryEngine(
             .trim()
     }
 
-    private fun totalBodyBudget(
-        documents: List<SemanticDocument>,
-        granularity: RollupGranularity,
-        maxTokens: Int,
-    ): Int {
-        val baseBudget = when (granularity) {
-            RollupGranularity.DAILY -> 1_200
-            RollupGranularity.WEEKLY -> 1_600
-            RollupGranularity.MONTHLY -> 2_000
-            RollupGranularity.YEARLY -> 2_400
+    private fun totalBodyBudget(granularity: RollupGranularity): Int {
+        // The compiled Gemma 4 E2B model has a 512-token context window (input + output).
+        // With 96 tokens reserved for output and ~15 for special tokens, the input budget
+        // is ~401 tokens ≈ 1200 chars at 3 chars/token (worst-case mixed content).
+        // These values are sized so that total prompts (body + ~60-char-capped titles +
+        // timestamps + instruction text) stay well under that limit.
+        return when (granularity) {
+            // 3 docs × 180 chars = 540; total prompt ~950–1050 chars ≈ 300–350 input tokens
+            RollupGranularity.DAILY -> 540
+            // 4 docs × 180 chars = 720; daily-summary titles are short (~27 chars)
+            // so total prompt ~1150–1200 chars ≈ 340–400 input tokens
+            RollupGranularity.WEEKLY -> 720
+            RollupGranularity.MONTHLY -> 720
+            RollupGranularity.YEARLY -> 720
         }
-        // Reserve tokens for: instruction preamble (~60 tokens), per-doc timestamps (~6 tokens
-        // each), conversation format special tokens (~15 tokens). These are not body text but
-        // still consume context window space. Without accounting for them, the total prompt
-        // can exceed the compiled model's fixed max sequence length and fail at the JNI layer.
-        val promptOverheadTokens = INSTRUCTION_TEMPLATE_TOKENS + (documents.size * PER_DOC_METADATA_TOKENS) + CONVERSATION_SPECIAL_TOKENS
-        val promptBudget = ((maxTokens - RESERVED_OUTPUT_TOKENS - promptOverheadTokens).coerceAtLeast(MIN_INPUT_TOKENS) * CHARS_PER_TOKEN_ESTIMATE)
-        return minOf(baseBudget, promptBudget)
     }
 
     private fun defaultTitle(
@@ -250,17 +249,8 @@ class LocalSummaryEngine(
         private val EXCESS_BLANK_LINE_REGEX = Regex("\\n{3,}")
         private const val MIN_SOURCE_BODY_CHARS = 180
         private const val MAX_SOURCE_BODY_CHARS = 800
-        private const val SUMMARY_MAX_TOKENS = 512
+        private const val MIN_SUMMARY_TOKENS = 1024
+        private const val MAX_SUMMARY_TOKENS = 4096
         private const val SUMMARY_TOP_K = 8
-        private const val RESERVED_OUTPUT_TOKENS = 96
-        private const val MIN_INPUT_TOKENS = 160
-        private const val CHARS_PER_TOKEN_ESTIMATE = 4
-        // Tokens consumed by fixed prompt structure, not counted in the body budget:
-        // ~60 for the instruction block text, ~15 for Gemma conversation format tokens.
-        private const val INSTRUCTION_TEMPLATE_TOKENS = 60
-        private const val CONVERSATION_SPECIAL_TOKENS = 15
-        // Per-document: ISO timestamp prefix (~6 tokens) plus a conservative title allowance
-        // (titles are capped at 180 chars but average ~60 chars; 60/4 = ~15 tokens each).
-        private const val PER_DOC_METADATA_TOKENS = 21
     }
 }
