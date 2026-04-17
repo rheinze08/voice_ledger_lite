@@ -159,16 +159,24 @@ class LocalSummaryEngine(
         val formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
         val sourceBlock = buildSourceBlock(documents, granularity, formatter)
 
-        return """
-            Summarize these notes for ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.
-            Use only the source text.
-            Plain text only.
-            Write 2 to 4 concise sentences.
-            Preserve important events, decisions, follow-ups, and repeated signals.
-            Compress repetition aggressively.
+        return when (granularity) {
+            RollupGranularity.DAILY -> """
+                Summarize these notes for ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.
+                Write 3 to 5 bullet points. Start each bullet with "- ".
+                Each bullet covers one distinct event, mood, decision, or observation.
+                Rewrite in your own words. Skip filler, greetings, and repetition.
 
-            $sourceBlock
-        """.trimIndent()
+                $sourceBlock
+            """.trimIndent()
+            else -> """
+                Summarize these notes for ${formatDateRange(periodStartEpochMs, periodEndEpochMs)}.
+                Write 4 to 6 bullet points. Start each bullet with "- ".
+                Each bullet covers one key theme, pattern, or event from the period.
+                Rewrite in your own words. Skip filler, greetings, and repetition.
+
+                $sourceBlock
+            """.trimIndent()
+        }
     }
 
     private fun buildSourceBlock(
