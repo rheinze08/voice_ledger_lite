@@ -49,13 +49,22 @@ enum class InsightRefreshMode {
     REBUILD,
 }
 
+enum class NotesDocumentLayer {
+    CREATED,
+    GENERATED,
+}
+
 const val MAX_TAGS = 5
 
 data class LedgerUiState(
     val selectedTab: AppTab = AppTab.NOTES,
     val notes: List<NoteWithLabels> = emptyList(),
     val labels: List<LabelEntity> = emptyList(),
+    val notesDocumentLayer: NotesDocumentLayer = NotesDocumentLayer.CREATED,
+    val generatedGranularity: RollupGranularity = RollupGranularity.DAILY,
     val selectedNoteId: Long? = null,
+    val selectedRollupId: String? = null,
+    val createdNotesSourceFilterNoteIds: Set<Long>? = null,
     val editingNoteId: Long? = null,
     val composeTitle: String = "",
     val composeBody: String = "",
@@ -124,11 +133,18 @@ class LedgerViewModel(
         viewModelScope.launch {
             repository.observeNotes().collect { notes ->
                 _uiState.update { state ->
-                    val selectedStillExists = notes.any { it.note.id == state.selectedNoteId }
+                    val visibleNotes = state.createdNotesSourceFilterNoteIds?.let { sourceIds ->
+                        notes.filter { it.note.id in sourceIds }
+                    } ?: notes
+                    val selectedStillExists = visibleNotes.any { it.note.id == state.selectedNoteId }
                     state.copy(
                         notes = notes,
                         localStats = calculateStats(notes),
-                        selectedNoteId = if (selectedStillExists) state.selectedNoteId else notes.firstOrNull()?.note?.id,
+                        selectedNoteId = if (selectedStillExists) {
+                            state.selectedNoteId
+                        } else {
+                            visibleNotes.firstOrNull()?.note?.id
+                        },
                     )
                 }
             }
@@ -150,7 +166,20 @@ class LedgerViewModel(
         }
         viewModelScope.launch {
             repository.observeRollups().collect { rollups ->
-                _uiState.update { it.copy(rollups = rollups.sortedByDescending(RollupSnapshot::periodEndEpochMs)) }
+                _uiState.update { state ->
+                    val sortedRollups = rollups.sortedByDescending(RollupSnapshot::periodEndEpochMs)
+                    val selectedStillExists = sortedRollups.any {
+                        it.id == state.selectedRollupId && it.granularity == state.generatedGranularity
+                    }
+                    state.copy(
+                        rollups = sortedRollups,
+                        selectedRollupId = if (selectedStillExists) {
+                            state.selectedRollupId
+                        } else {
+                            sortedRollups.firstOrNull { it.granularity == state.generatedGranularity }?.id
+                        },
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -165,7 +194,91 @@ class LedgerViewModel(
     }
 
     fun selectNote(noteId: Long?) {
-        _uiState.update { it.copy(selectedNoteId = noteId, selectedTab = AppTab.NOTES) }
+        selectCreatedNote(noteId)
+    }
+
+    fun selectCreatedDocumentLayer() {
+        _uiState.update { state ->
+            val visibleNotes = state.createdNotesSourceFilterNoteIds?.let { sourceIds ->
+                state.notes.filter { it.note.id in sourceIds }
+            } ?: state.notes
+            state.copy(
+                selectedTab = AppTab.NOTES,
+                notesDocumentLayer = NotesDocumentLayer.CREATED,
+                selectedNoteId = visibleNotes.firstOrNull { it.note.id == state.selectedNoteId }?.note?.id
+                    ?: visibleNotes.firstOrNull()?.note?.id,
+            )
+        }
+    }
+
+    fun selectGeneratedDocumentLayer() {
+        _uiState.update { state ->
+            state.copy(
+                selectedTab = AppTab.NOTES,
+                notesDocumentLayer = NotesDocumentLayer.GENERATED,
+                selectedRollupId = state.rollups.firstOrNull { it.id == state.selectedRollupId && it.granularity == state.generatedGranularity }?.id
+                    ?: state.rollups.firstOrNull { it.granularity == state.generatedGranularity }?.id,
+            )
+        }
+    }
+
+    fun selectGeneratedGranularity(granularity: RollupGranularity) {
+        _uiState.update { state ->
+            state.copy(
+                selectedTab = AppTab.NOTES,
+                notesDocumentLayer = NotesDocumentLayer.GENERATED,
+                generatedGranularity = granularity,
+                selectedRollupId = state.rollups.firstOrNull {
+                    it.id == state.selectedRollupId && it.granularity == granularity
+                }?.id ?: state.rollups.firstOrNull { it.granularity == granularity }?.id,
+            )
+        }
+    }
+
+    fun selectRollup(rollupId: String?) {
+        _uiState.update { state ->
+            val rollup = state.rollups.firstOrNull { it.id == rollupId } ?: return@update state
+            state.copy(
+                selectedTab = AppTab.NOTES,
+                notesDocumentLayer = NotesDocumentLayer.GENERATED,
+                generatedGranularity = rollup.granularity,
+                selectedRollupId = rollup.id,
+            )
+        }
+    }
+
+    fun showRollupSourceNotes(rollupId: String) {
+        _uiState.update { state ->
+            val rollup = state.rollups.firstOrNull { it.id == rollupId } ?: return@update state
+            val visibleNotes = state.notes.filter { it.note.id in rollup.noteIds }
+            state.copy(
+                selectedTab = AppTab.NOTES,
+                notesDocumentLayer = NotesDocumentLayer.CREATED,
+                createdNotesSourceFilterNoteIds = rollup.noteIds.toSet(),
+                selectedNoteId = visibleNotes.firstOrNull()?.note?.id,
+            )
+        }
+    }
+
+    fun clearCreatedSourceFilter() {
+        _uiState.update { state ->
+            val visibleNotes = state.notes
+            state.copy(
+                createdNotesSourceFilterNoteIds = null,
+                selectedNoteId = visibleNotes.firstOrNull { it.note.id == state.selectedNoteId }?.note?.id
+                    ?: visibleNotes.firstOrNull()?.note?.id,
+            )
+        }
+    }
+
+    fun selectCreatedNote(noteId: Long?) {
+        _uiState.update {
+            it.copy(
+                selectedTab = AppTab.NOTES,
+                notesDocumentLayer = NotesDocumentLayer.CREATED,
+                selectedNoteId = noteId,
+            )
+        }
     }
 
     fun updateComposeTitle(value: String) {
@@ -523,7 +636,15 @@ class LedgerViewModel(
     }
 
     fun openSearchHit(hit: SemanticSearchHit) {
-        hit.noteId?.let(::selectNote)
+        when {
+            hit.noteId != null -> {
+                _uiState.update {
+                    it.copy(createdNotesSourceFilterNoteIds = null)
+                }
+                selectCreatedNote(hit.noteId)
+            }
+            hit.rollupId != null -> selectRollup(hit.rollupId)
+        }
     }
 
     fun refreshInsights(rebuildFromStartDate: Boolean = false) {

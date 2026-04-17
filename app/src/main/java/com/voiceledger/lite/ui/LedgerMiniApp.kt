@@ -160,7 +160,13 @@ fun LedgerMiniApp(
             AppTab.NOTES -> NotesScreen(
                 state = state,
                 paddingValues = innerPadding,
-                onSelect = viewModel::selectNote,
+                onSelectCreatedNote = viewModel::selectCreatedNote,
+                onSelectCreatedLayer = viewModel::selectCreatedDocumentLayer,
+                onSelectGeneratedLayer = viewModel::selectGeneratedDocumentLayer,
+                onSelectGeneratedGranularity = viewModel::selectGeneratedGranularity,
+                onSelectRollup = viewModel::selectRollup,
+                onShowRollupSourceNotes = viewModel::showRollupSourceNotes,
+                onClearCreatedSourceFilter = viewModel::clearCreatedSourceFilter,
                 onEdit = viewModel::loadNoteIntoComposer,
                 onDelete = viewModel::deleteNote,
             )
@@ -288,15 +294,32 @@ private val AppTab.label: String
 private fun NotesScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
-    onSelect: (Long?) -> Unit,
+    onSelectCreatedNote: (Long?) -> Unit,
+    onSelectCreatedLayer: () -> Unit,
+    onSelectGeneratedLayer: () -> Unit,
+    onSelectGeneratedGranularity: (RollupGranularity) -> Unit,
+    onSelectRollup: (String?) -> Unit,
+    onShowRollupSourceNotes: (String) -> Unit,
+    onClearCreatedSourceFilter: () -> Unit,
     onEdit: (NoteWithLabels) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
-    val selectedNote = state.notes.firstOrNull { it.note.id == state.selectedNoteId }
+    val createdNotes = state.createdNotesSourceFilterNoteIds?.let { sourceIds ->
+        state.notes.filter { it.note.id in sourceIds }
+    } ?: state.notes
+    val selectedNote = createdNotes.firstOrNull { it.note.id == state.selectedNoteId }
     val recordNotes = if (selectedNote == null) {
-        state.notes
+        createdNotes
     } else {
-        state.notes.filterNot { it.note.id == selectedNote.note.id }
+        createdNotes.filterNot { it.note.id == selectedNote.note.id }
+    }
+    val generatedRollups = state.rollups.filter { it.granularity == state.generatedGranularity }
+    val selectedRollup = generatedRollups.firstOrNull { it.id == state.selectedRollupId }
+        ?: generatedRollups.firstOrNull()
+    val recordRollups = if (selectedRollup == null) {
+        generatedRollups
+    } else {
+        generatedRollups.filterNot { it.id == selectedRollup.id }
     }
     LazyColumn(
         modifier = Modifier
@@ -308,82 +331,343 @@ private fun NotesScreen(
         item {
             StatsRow(state.localStats)
         }
-        if (selectedNote != null) {
+        item {
+            NotesDocumentLayerSwitch(
+                selectedLayer = state.notesDocumentLayer,
+                onSelectCreated = onSelectCreatedLayer,
+                onSelectGenerated = onSelectGeneratedLayer,
+            )
+        }
+        if (state.notesDocumentLayer == NotesDocumentLayer.CREATED && state.createdNotesSourceFilterNoteIds != null) {
             item {
-                SectionHeader("Active")
+                SourceNotesFilterCard(
+                    sourceCount = state.createdNotesSourceFilterNoteIds.size,
+                    onClear = onClearCreatedSourceFilter,
+                )
             }
+        }
+        if (state.notesDocumentLayer == NotesDocumentLayer.GENERATED) {
             item {
-                ElevatedCard(
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(selectedNote.note.title, style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            formatTimestamp(selectedNote.note.createdAtEpochMs),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (selectedNote.labels.isNotEmpty()) {
-                            LabelStrip(labels = selectedNote.labels)
-                        }
-                        Text(selectedNote.note.body, style = MaterialTheme.typography.bodyMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = { onEdit(selectedNote) }) {
-                                Text("Edit")
-                            }
-                            OutlinedButton(onClick = { onDelete(selectedNote.note.id) }) {
-                                Text("Delete")
-                            }
-                        }
-                    }
+                GeneratedGranularitySwitch(
+                    selectedGranularity = state.generatedGranularity,
+                    onSelect = onSelectGeneratedGranularity,
+                )
+            }
+        }
+        if (state.notesDocumentLayer == NotesDocumentLayer.CREATED) {
+            if (selectedNote != null) {
+                item {
+                    SectionHeader("Active")
+                }
+                item {
+                    CreatedNoteActiveCard(
+                        note = selectedNote,
+                        onEdit = onEdit,
+                        onDelete = onDelete,
+                    )
                 }
             }
-        }
-        if (recordNotes.isNotEmpty()) {
-            item {
-                SectionHeader("Records")
+            if (createdNotes.isEmpty()) {
+                item {
+                    EmptyNotesState(
+                        if (state.createdNotesSourceFilterNoteIds == null) {
+                            "No notes yet."
+                        } else {
+                            "No source notes are available for that summary."
+                        },
+                    )
+                }
+            } else if (recordNotes.isNotEmpty()) {
+                item {
+                    SectionHeader("Records")
+                }
+            }
+            items(recordNotes, key = { it.note.id }) { note ->
+                CreatedNoteRecordCard(
+                    note = note,
+                    isSelected = state.selectedNoteId == note.note.id,
+                    onSelect = onSelectCreatedNote,
+                )
+            }
+        } else {
+            if (selectedRollup != null) {
+                item {
+                    SectionHeader("Active")
+                }
+                item {
+                    GeneratedRollupActiveCard(
+                        rollup = selectedRollup,
+                        onShowSourceNotes = onShowRollupSourceNotes,
+                    )
+                }
+            }
+            if (generatedRollups.isEmpty()) {
+                item {
+                    EmptyNotesState(
+                        "No ${state.generatedGranularity.notesTabLabel().lowercase()} summaries yet. Run Update or Rebuild in Summarize first.",
+                    )
+                }
+            } else if (recordRollups.isNotEmpty()) {
+                item {
+                    SectionHeader("Records")
+                }
+            }
+            items(recordRollups, key = RollupSnapshot::id) { rollup ->
+                GeneratedRollupRecordCard(
+                    rollup = rollup,
+                    isSelected = state.selectedRollupId == rollup.id,
+                    onSelect = onSelectRollup,
+                )
             }
         }
-        items(recordNotes, key = { it.note.id }) { note ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(note.note.id) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (state.selectedNoteId == note.note.id) {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    },
-                ),
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NotesDocumentLayerSwitch(
+    selectedLayer: NotesDocumentLayer,
+    onSelectCreated: () -> Unit,
+    onSelectGenerated: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "Browse your authored notes or generated summaries.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = selectedLayer == NotesDocumentLayer.CREATED,
+                onClick = onSelectCreated,
+                label = { Text("Created") },
+            )
+            FilterChip(
+                selected = selectedLayer == NotesDocumentLayer.GENERATED,
+                onClick = onSelectGenerated,
+                label = { Text("Generated") },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GeneratedGranularitySwitch(
+    selectedGranularity: RollupGranularity,
+    onSelect: (RollupGranularity) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "Generated layers",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            RollupGranularity.entries.forEach { granularity ->
+                FilterChip(
+                    selected = selectedGranularity == granularity,
+                    onClick = { onSelect(granularity) },
+                    label = { Text(granularity.notesTabLabel()) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceNotesFilterCard(
+    sourceCount: Int,
+    onClear: () -> Unit,
+) {
+    ElevatedCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(note.note.title, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        formatTimestamp(note.note.createdAtEpochMs),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (note.labels.isNotEmpty()) {
-                        LabelStrip(labels = note.labels)
-                    }
-                    Text(
-                        text = note.note.body,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                Text("Source notes", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Showing the $sourceCount authored note(s) that fed the selected generated summary.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = onClear) {
+                Text("Show all")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreatedNoteActiveCard(
+    note: NoteWithLabels,
+    onEdit: (NoteWithLabels) -> Unit,
+    onDelete: (Long) -> Unit,
+) {
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(note.note.title, style = MaterialTheme.typography.titleLarge)
+            Text(
+                formatTimestamp(note.note.createdAtEpochMs),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (note.labels.isNotEmpty()) {
+                LabelStrip(labels = note.labels)
+            }
+            Text(note.note.body, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { onEdit(note) }) {
+                    Text("Edit")
+                }
+                OutlinedButton(onClick = { onDelete(note.note.id) }) {
+                    Text("Delete")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CreatedNoteRecordCard(
+    note: NoteWithLabels,
+    isSelected: Boolean,
+    onSelect: (Long?) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(note.note.id) },
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(note.note.title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                formatTimestamp(note.note.createdAtEpochMs),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (note.labels.isNotEmpty()) {
+                LabelStrip(labels = note.labels)
+            }
+            Text(
+                text = note.note.body,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GeneratedRollupActiveCard(
+    rollup: RollupSnapshot,
+    onShowSourceNotes: (String) -> Unit,
+) {
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(rollup.title, style = MaterialTheme.typography.titleLarge)
+            Text(
+                "${rollup.granularity.notesTabLabel()} summary | ${formatRollupPeriod(rollup)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "Generated ${formatTimestamp(rollup.generatedAtEpochMs)} from ${rollup.sourceCount} source item(s) with ${rollup.modelLabel}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(rollup.overview, style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = { onShowSourceNotes(rollup.id) }) {
+                Text("Show source notes")
+            }
+        }
+    }
+}
+
+@Composable
+private fun GeneratedRollupRecordCard(
+    rollup: RollupSnapshot,
+    isSelected: Boolean,
+    onSelect: (String?) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(rollup.id) },
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(rollup.title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                formatRollupPeriod(rollup),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = rollup.overview,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyNotesState(message: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 1.dp,
+    ) {
+        Text(
+            text = message,
+            modifier = Modifier.padding(16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1161,6 +1445,15 @@ private fun RollupGranularity.displayLabel(): String {
     return name.lowercase().replaceFirstChar { it.uppercase() }
 }
 
+private fun RollupGranularity.notesTabLabel(): String {
+    return when (this) {
+        RollupGranularity.DAILY -> "Daily"
+        RollupGranularity.WEEKLY -> "Weekly"
+        RollupGranularity.MONTHLY -> "Monthly"
+        RollupGranularity.YEARLY -> "Annual"
+    }
+}
+
 private fun LocalModelInstallState.displayLabel(): String {
     return when (this) {
         LocalModelInstallState.CHECKING -> "Checking"
@@ -1247,6 +1540,17 @@ private fun SemanticSearchHit.kindLabel(): String {
 private fun formatTimestamp(epochMs: Long): String {
     val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a").withZone(ZoneId.systemDefault())
     return formatter.format(Instant.ofEpochMilli(epochMs))
+}
+
+private fun formatDateOnly(epochMs: Long): String {
+    val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy").withZone(ZoneId.systemDefault())
+    return formatter.format(Instant.ofEpochMilli(epochMs))
+}
+
+private fun formatRollupPeriod(rollup: RollupSnapshot): String {
+    val start = formatDateOnly(rollup.periodStartEpochMs)
+    val end = formatDateOnly(rollup.periodEndEpochMs)
+    return if (start == end) start else "$start to $end"
 }
 
 private fun formatProgressPercent(progress: Float): String {
