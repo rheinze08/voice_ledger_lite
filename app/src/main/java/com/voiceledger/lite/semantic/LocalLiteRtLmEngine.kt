@@ -27,7 +27,9 @@ class LocalLiteRtLmEngine(private val context: Context) {
                     EngineConfig(
                         modelPath = model.path,
                         backend = backend,
-                        maxNumTokens = normalized.maxTokens.coerceIn(MIN_NUM_TOKENS, MAX_NUM_TOKENS),
+                        // Compiled Gemma 4 E2B has a fixed 512-token context window; passing
+                        // a larger value causes nativeSendMessage to fail at inference time.
+                        maxNumTokens = COMPILED_MODEL_CONTEXT_WINDOW,
                         cacheDir = cacheDirectory.absolutePath,
                     ),
                 )
@@ -98,8 +100,7 @@ class LocalLiteRtLmEngine(private val context: Context) {
 
     companion object {
         private const val DEFAULT_TOP_P = 0.95
-        private const val MIN_NUM_TOKENS = 512
-        private const val MAX_NUM_TOKENS = 4096
+        private const val COMPILED_MODEL_CONTEXT_WINDOW = 512
         private const val MAX_TOP_K = 32
     }
 }
