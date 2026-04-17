@@ -80,6 +80,8 @@ data class LedgerUiState(
     val isSearching: Boolean = false,
     val infoMessage: String? = null,
     val errorMessage: String? = null,
+    val progressLog: List<String> = emptyList(),
+    val lastRunSucceeded: Boolean? = null,
 )
 
 class LedgerViewModel(
@@ -92,6 +94,7 @@ class LedgerViewModel(
     private var showProvisioningSuccessMessage = false
     private var hasObservedAggregationWork = false
     private var lastHandledAggregationTerminalId: String? = null
+    private var lastTrackedProgressMessage: String? = null
     private val _uiState = MutableStateFlow(
         LedgerUiState(
             settings = settingsStore.load(),
@@ -522,11 +525,14 @@ class LedgerViewModel(
         if (_uiState.value.isRefreshingInsights) {
             return
         }
+        lastTrackedProgressMessage = null
         _uiState.update {
             it.copy(
                 isRefreshingInsights = true,
                 activeInsightRefreshMode = if (rebuildFromStartDate) InsightRefreshMode.REBUILD else InsightRefreshMode.UPDATE,
                 errorMessage = null,
+                progressLog = emptyList(),
+                lastRunSucceeded = null,
             )
         }
         AggregationScheduler.enqueueImmediate(appContext, rebuildFromStartDate)
@@ -599,11 +605,16 @@ class LedgerViewModel(
             val isActive = AggregationScheduler.isImmediateActive(workInfos)
             val isRebuild = AggregationScheduler.immediateWorkIsRebuild(workInfos)
             val terminalResult = AggregationScheduler.immediateTerminalResult(workInfos)
+            val progressMessage = AggregationScheduler.immediateProgressMessage(workInfos)
             val shouldHandleTerminal = hasObservedAggregationWork &&
                 terminalResult != null &&
                 terminalResult.workId != lastHandledAggregationTerminalId
             if (shouldHandleTerminal) {
                 lastHandledAggregationTerminalId = terminalResult?.workId
+            }
+            val isNewProgressMessage = progressMessage != null && progressMessage != lastTrackedProgressMessage
+            if (isNewProgressMessage) {
+                lastTrackedProgressMessage = progressMessage
             }
             val modelStatus = if (shouldHandleTerminal) {
                 modelProvisioner.currentStatus()
@@ -619,6 +630,26 @@ class LedgerViewModel(
                         isActive && isRebuild -> InsightRefreshMode.REBUILD
                         isActive -> InsightRefreshMode.UPDATE
                         else -> null
+                    },
+                    progressLog = buildList {
+                        addAll(state.progressLog)
+                        if (isNewProgressMessage && progressMessage != null) {
+                            add(progressMessage)
+                        }
+                        if (shouldHandleTerminal && terminalResult != null) {
+                            val finalMsg = when (terminalResult.state) {
+                                androidx.work.WorkInfo.State.SUCCEEDED ->
+                                    terminalResult.message ?: "Summaries and semantic search index refreshed."
+                                else ->
+                                    terminalResult.message ?: "Local aggregation failed."
+                            }
+                            add(finalMsg)
+                        }
+                    },
+                    lastRunSucceeded = when {
+                        shouldHandleTerminal && terminalResult != null ->
+                            terminalResult.state == androidx.work.WorkInfo.State.SUCCEEDED
+                        else -> state.lastRunSucceeded
                     },
                     infoMessage = when {
                         shouldHandleTerminal && terminalResult?.state == androidx.work.WorkInfo.State.SUCCEEDED ->

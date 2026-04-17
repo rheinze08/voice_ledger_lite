@@ -709,6 +709,32 @@ private fun SummarizeScreen(
                 }
             }
         }
+        if (state.progressLog.isNotEmpty()) {
+            item {
+                ElevatedCard {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("Last run log", style = MaterialTheme.typography.titleMedium)
+                        state.progressLog.forEachIndexed { index, entry ->
+                            val isLastEntry = index == state.progressLog.lastIndex
+                            Text(
+                                "· $entry",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    isLastEntry && state.lastRunSucceeded == false ->
+                                        MaterialTheme.colorScheme.error
+                                    isLastEntry && state.lastRunSucceeded == true ->
+                                        MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item {
             ModelProvisioningCard(
                 state = state,
