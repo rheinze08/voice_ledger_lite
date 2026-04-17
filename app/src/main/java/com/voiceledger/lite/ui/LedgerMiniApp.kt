@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -718,6 +719,7 @@ private fun ComposeScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(paddingValues)
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -757,9 +759,7 @@ private fun ComposeScreen(
         OutlinedTextField(
             value = state.composeBody,
             onValueChange = onBodyChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             label = { Text("Body") },
             minLines = 10,
         )
@@ -1368,26 +1368,6 @@ private fun SummarizeScreen(
             }
             items(state.checkpoints, key = { it.granularity.name }) { checkpoint ->
                 CheckpointCard(checkpoint)
-            }
-        }
-        if (state.rollups.isNotEmpty()) {
-            item {
-                Text("Summaries", style = MaterialTheme.typography.titleLarge)
-            }
-            RollupGranularity.entries.forEach { granularity ->
-                val summaries = state.rollups.filter { it.granularity == granularity }
-                if (summaries.isNotEmpty()) {
-                    item {
-                        Text(
-                            "${granularity.displayLabel()} summaries",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    items(summaries, key = RollupSnapshot::id) { rollup ->
-                        RollupCard(rollup)
-                    }
-                }
             }
         }
         item {
