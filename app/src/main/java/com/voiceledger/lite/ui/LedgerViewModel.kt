@@ -358,7 +358,7 @@ class LedgerViewModel(
             return
         }
         val title = current.composeTitle.trim().ifBlank {
-            body.lineSequence().firstOrNull()?.take(48) ?: "Untitled note"
+            current.composeDate.trim().ifBlank { "Untitled note" }
         }
         viewModelScope.launch {
             runCatching {
