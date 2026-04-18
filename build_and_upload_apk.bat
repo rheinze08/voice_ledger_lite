@@ -31,4 +31,3 @@ echo Uploading APK to Google Drive root...
 "C:\Users\Roland\Downloads\rclone\rclone.exe" copy "app\build\outputs\apk\release" "datawiseguysllc-gdrive:/" --include "*.apk" || exit /b 1
 
 echo Done!
-pause
