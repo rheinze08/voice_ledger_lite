@@ -19,6 +19,3 @@ git push origin main
 
 echo Uploading APK to Google Drive root...
 rclone copy "app\build\outputs\apk\release\app-release.apk" "gdrive:/"
-
-echo Done!
-pause
