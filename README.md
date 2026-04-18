@@ -45,6 +45,12 @@ Common commands:
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
+Optional local release signing:
+
+- Create a repo-local `keystore.properties` file or set environment variables with `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`.
+- `RELEASE_STORE_FILE` can be an absolute path or a path relative to the repo root.
+- Without those values, `:app:assembleRelease` still builds, but the APK is not signed for device installation.
+
 Important settings:
 
 - `Labels`: reusable note tags managed in Settings and used as optional search filters
