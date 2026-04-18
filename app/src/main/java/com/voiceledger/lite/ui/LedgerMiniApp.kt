@@ -213,7 +213,7 @@ fun LedgerMiniApp(
                     exportLauncher.launch("voice-ledger-export-${LocalDate.now()}.json")
                 },
                 onImportCorpus = {
-                    importLauncher.launch(arrayOf("application/json", "text/plain"))
+                    importLauncher.launch(arrayOf("*/*"))
                 },
                 onSave = viewModel::saveSettings,
             )
