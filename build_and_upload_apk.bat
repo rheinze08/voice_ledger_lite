@@ -18,4 +18,4 @@ git commit -m "Auto-build: updated APK"
 git push origin main
 
 echo Uploading APK to Google Drive root...
-"C:\Users\Roland\Downloads\rclone\rclone.exe" copy "app\build\outputs\apk\release\app-release.apk" "gdrive:/"
+"C:\Users\Roland\Downloads\rclone\rclone.exe" copy "app\build\outputs\apk\release\app-release.apk" "datawiseguysllc-gdrive:/"
