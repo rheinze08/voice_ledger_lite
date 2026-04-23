@@ -199,6 +199,10 @@ fun LedgerMiniApp(
                 onToggleSearchLabel = viewModel::toggleSearchLabel,
                 onSearch = viewModel::runSearch,
                 onOpenSearchHit = viewModel::openSearchHit,
+                onBroadScanDateFromChange = viewModel::updateBroadScanDateFrom,
+                onBroadScanDateToChange = viewModel::updateBroadScanDateTo,
+                onConfirmBroadScan = viewModel::confirmBroadScan,
+                onCancelBroadScan = viewModel::cancelBroadScan,
             )
             AppTab.SUMMARIZE -> SummarizeScreen(
                 state = state,
@@ -870,6 +874,57 @@ private fun ComposeScreen(
 }
 
 @Composable
+private fun BroadScanConfirmPanel(
+    state: LedgerUiState,
+    onDateFromChange: (String) -> Unit,
+    onDateToChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "Full scan required",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                "This question needs to scan all your notes and may take a while. Narrow it down with an optional date range, or search everything.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedTextField(
+                value = state.broadScanDateFrom,
+                onValueChange = onDateFromChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("From date (YYYY-MM-DD, optional)") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = state.broadScanDateTo,
+                onValueChange = onDateToChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("To date (YYYY-MM-DD, optional)") },
+                singleLine = true,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onConfirm) {
+                    Text("Search anyway")
+                }
+                OutlinedButton(onClick = onCancel) {
+                    Text("Cancel")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AskScreen(
     state: LedgerUiState,
     paddingValues: PaddingValues,
@@ -877,6 +932,10 @@ private fun AskScreen(
     onToggleSearchLabel: (Long) -> Unit,
     onSearch: () -> Unit,
     onOpenSearchHit: (SemanticSearchHit) -> Unit,
+    onBroadScanDateFromChange: (String) -> Unit,
+    onBroadScanDateToChange: (String) -> Unit,
+    onConfirmBroadScan: () -> Unit,
+    onCancelBroadScan: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -903,6 +962,10 @@ private fun AskScreen(
                         onToggleSearchLabel = onToggleSearchLabel,
                         onSearch = onSearch,
                         onOpenSearchHit = onOpenSearchHit,
+                        onBroadScanDateFromChange = onBroadScanDateFromChange,
+                        onBroadScanDateToChange = onBroadScanDateToChange,
+                        onConfirmBroadScan = onConfirmBroadScan,
+                        onCancelBroadScan = onCancelBroadScan,
                     )
                 }
             }
@@ -918,6 +981,10 @@ private fun SearchCard(
     onToggleSearchLabel: (Long) -> Unit,
     onSearch: () -> Unit,
     onOpenSearchHit: (SemanticSearchHit) -> Unit,
+    onBroadScanDateFromChange: (String) -> Unit,
+    onBroadScanDateToChange: (String) -> Unit,
+    onConfirmBroadScan: () -> Unit,
+    onCancelBroadScan: () -> Unit,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -945,8 +1012,18 @@ private fun SearchCard(
                 }
             }
         }
-        Button(onClick = onSearch, enabled = !state.isSearching) {
-            Text(if (state.isSearching) "Searching" else "Ask")
+        if (state.pendingBroadScan) {
+            BroadScanConfirmPanel(
+                state = state,
+                onDateFromChange = onBroadScanDateFromChange,
+                onDateToChange = onBroadScanDateToChange,
+                onConfirm = onConfirmBroadScan,
+                onCancel = onCancelBroadScan,
+            )
+        } else {
+            Button(onClick = onSearch, enabled = !state.isSearching) {
+                Text(if (state.isSearching) "Searching…" else "Ask")
+            }
         }
         state.searchAnswer?.let { answer ->
             AnswerPanel(answer)
