@@ -58,11 +58,11 @@ class ModelProvisioningWorker(
             status.embedding.progressFraction != null -> {
                 "Downloading embedding model ${status.embedding.downloadedBytes?.let(::formatBytes).orEmpty()} / ${status.embedding.totalBytes?.let(::formatBytes).orEmpty()}"
             }
-            else -> "Preparing local AI models for Voice Ledger Lite."
+            else -> "Preparing local AI models for Ledger Lite."
         }
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Installing Voice Ledger Lite models")
+            .setContentTitle("Installing Ledger Lite models")
             .setContentText(contentText)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -99,7 +99,7 @@ class ModelProvisioningWorker(
                 "Model downloads",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Downloads the local AI models required by Voice Ledger Lite."
+                description = "Downloads the local AI models required by Ledger Lite."
             },
         )
     }

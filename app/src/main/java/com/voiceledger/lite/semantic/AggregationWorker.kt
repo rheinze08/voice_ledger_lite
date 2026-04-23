@@ -92,9 +92,9 @@ class AggregationWorker(
     private fun createForegroundInfo(message: String, rebuildRequested: Boolean): ForegroundInfo {
         createNotificationChannelIfNeeded()
         val title = if (rebuildRequested) {
-            "Rebuilding Voice Ledger summaries"
+            "Rebuilding Ledger Lite summaries"
         } else {
-            "Updating Voice Ledger summaries"
+            "Updating Ledger Lite summaries"
         }
         // PendingIntent is intentionally omitted: ForegroundInfo is marshalled to bytes when
         // crossing from the :aggregation process to the main process, and Parcel.marshall()
@@ -133,7 +133,7 @@ class AggregationWorker(
                 "Summary rebuilds",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Builds local summaries and semantic indexes for Voice Ledger Lite."
+                description = "Builds local summaries and semantic indexes for Ledger Lite."
             },
         )
     }
