@@ -16,6 +16,7 @@ import com.voiceledger.lite.semantic.AggregationCheckpoint
 import com.voiceledger.lite.semantic.AggregationLogSnapshot
 import com.voiceledger.lite.semantic.AggregationRunLogger
 import com.voiceledger.lite.semantic.AggregationScheduler
+import com.voiceledger.lite.semantic.BroadScanParams
 import com.voiceledger.lite.semantic.GeneratedAnswer
 import com.voiceledger.lite.semantic.LocalAggregationCoordinator
 import com.voiceledger.lite.semantic.LocalModelProvisioner
@@ -23,6 +24,8 @@ import com.voiceledger.lite.semantic.LocalModelProvisioningStatus
 import com.voiceledger.lite.semantic.ModelProvisioningScheduler
 import com.voiceledger.lite.semantic.RollupSnapshot
 import com.voiceledger.lite.semantic.SearchRouteStep
+import com.voiceledger.lite.semantic.SearchStrategy
+import com.voiceledger.lite.semantic.SearchStrategyRouter
 import com.voiceledger.lite.semantic.SemanticSearchHit
 import java.time.Duration
 import java.time.Instant
@@ -84,6 +87,9 @@ data class LedgerUiState(
     val searchResults: List<SemanticSearchHit> = emptyList(),
     val searchAnswer: GeneratedAnswer? = null,
     val searchAnswerNotice: String? = null,
+    val pendingBroadScan: Boolean = false,
+    val broadScanDateFrom: String = "",
+    val broadScanDateTo: String = "",
     val isInitialSetupComplete: Boolean = false,
     val isProvisioningModels: Boolean = true,
     val isTransferringCorpus: Boolean = false,
@@ -106,6 +112,7 @@ class LedgerViewModel(
 ) : ViewModel() {
     private val modelProvisioner = LocalModelProvisioner(appContext, settingsStore)
     private val aggregationRunLogger = AggregationRunLogger(appContext)
+    private val searchStrategyRouter = SearchStrategyRouter(appContext)
     private var showProvisioningSuccessMessage = false
     private var hasObservedAggregationWork = false
     private var lastHandledAggregationTerminalId: String? = null
@@ -653,6 +660,7 @@ class LedgerViewModel(
                     searchResults = emptyList(),
                     searchAnswer = null,
                     searchAnswerNotice = null,
+                    pendingBroadScan = false,
                 )
             }
             return
@@ -664,23 +672,24 @@ class LedgerViewModel(
                     errorMessage = null,
                     searchAnswer = null,
                     searchAnswerNotice = null,
+                    pendingBroadScan = false,
                 )
             }
             try {
-                val response = coordinator.search(query, current.searchSelectedLabelIds)
-                val modelStatus = modelProvisioner.currentStatus()
-                _uiState.update {
-                    it.copy(
-                        settings = settingsStore.load(),
-                        modelProvisioning = modelStatus,
-                        isSearching = false,
-                        searchRoute = response.route,
-                        searchResults = response.hits,
-                        searchAnswer = response.answer,
-                        searchAnswerNotice = response.answerNotice,
-                        infoMessage = if (response.hits.isEmpty()) "No semantic matches found for that query." else null,
-                    )
+                val settings = settingsStore.load()
+                val strategy = searchStrategyRouter.classify(query, settings)
+                if (strategy == SearchStrategy.BROAD_SCAN) {
+                    _uiState.update {
+                        it.copy(
+                            isSearching = false,
+                            pendingBroadScan = true,
+                            broadScanDateFrom = "",
+                            broadScanDateTo = "",
+                        )
+                    }
+                    return@launch
                 }
+                executeSemanticSearch(query, current.searchSelectedLabelIds)
             } catch (exception: Exception) {
                 _uiState.update {
                     it.copy(
@@ -690,6 +699,92 @@ class LedgerViewModel(
                         errorMessage = exception.message ?: "Search failed.",
                     )
                 }
+            }
+        }
+    }
+
+    fun updateBroadScanDateFrom(value: String) {
+        _uiState.update { it.copy(broadScanDateFrom = value) }
+    }
+
+    fun updateBroadScanDateTo(value: String) {
+        _uiState.update { it.copy(broadScanDateTo = value) }
+    }
+
+    fun cancelBroadScan() {
+        _uiState.update { it.copy(pendingBroadScan = false, broadScanDateFrom = "", broadScanDateTo = "") }
+    }
+
+    fun confirmBroadScan() {
+        val current = _uiState.value
+        val query = current.searchQuery.trim()
+        if (query.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isSearching = true, pendingBroadScan = false, errorMessage = null, searchAnswer = null, searchAnswerNotice = null)
+            }
+            try {
+                val fromEpochMs = current.broadScanDateFrom.trim().takeIf(String::isNotBlank)?.let { raw ->
+                    runCatching { LocalDate.parse(raw).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() }.getOrNull()
+                }
+                val toEpochMs = current.broadScanDateTo.trim().takeIf(String::isNotBlank)?.let { raw ->
+                    runCatching {
+                        LocalDate.parse(raw).plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() - 1
+                    }.getOrNull()
+                }
+                val response = coordinator.searchBroadScan(
+                    query = query,
+                    labelIds = current.searchSelectedLabelIds,
+                    params = BroadScanParams(fromEpochMs = fromEpochMs, toEpochMs = toEpochMs),
+                )
+                val modelStatus = modelProvisioner.currentStatus()
+                _uiState.update {
+                    it.copy(
+                        settings = settingsStore.load(),
+                        modelProvisioning = modelStatus,
+                        isSearching = false,
+                        searchRoute = emptyList(),
+                        searchResults = response.hits,
+                        searchAnswer = response.answer,
+                        searchAnswerNotice = response.answerNotice,
+                        infoMessage = if (response.hits.isEmpty()) "No matches found in the scanned range." else null,
+                    )
+                }
+            } catch (exception: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        errorMessage = exception.message ?: "Broad scan failed.",
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun executeSemanticSearch(query: String, labelIds: Set<Long>) {
+        try {
+            val response = coordinator.search(query, labelIds)
+            val modelStatus = modelProvisioner.currentStatus()
+            _uiState.update {
+                it.copy(
+                    settings = settingsStore.load(),
+                    modelProvisioning = modelStatus,
+                    isSearching = false,
+                    searchRoute = response.route,
+                    searchResults = response.hits,
+                    searchAnswer = response.answer,
+                    searchAnswerNotice = response.answerNotice,
+                    infoMessage = if (response.hits.isEmpty()) "No semantic matches found for that query." else null,
+                )
+            }
+        } catch (exception: Exception) {
+            _uiState.update {
+                it.copy(
+                    isSearching = false,
+                    searchAnswer = null,
+                    searchAnswerNotice = null,
+                    errorMessage = exception.message ?: "Search failed.",
+                )
             }
         }
     }

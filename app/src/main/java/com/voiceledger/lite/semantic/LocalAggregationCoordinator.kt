@@ -396,6 +396,98 @@ class LocalAggregationCoordinator(
         )
     }
 
+    suspend fun searchBroadScan(
+        query: String,
+        labelIds: Set<Long> = emptySet(),
+        params: BroadScanParams = BroadScanParams(),
+    ): SemanticSearchResponse = withContext(Dispatchers.IO) {
+        val normalized = query.trim()
+        if (normalized.isBlank()) {
+            return@withContext SemanticSearchResponse(route = emptyList(), hits = emptyList())
+        }
+
+        val modelStatus = modelProvisioner.ensureInstalled()
+        val settings = settingsStore.load().normalized()
+        val queryVector = embeddingEngine.embed(normalized, settings)
+        val decodedEntries = repository.allSemanticEntries().mapNotNull(::decodeEntry)
+        if (decodedEntries.isEmpty()) {
+            return@withContext SemanticSearchResponse(route = emptyList(), hits = emptyList())
+        }
+
+        val noteLabelScope = if (labelIds.isEmpty()) null else repository.noteIdsWithAnyLabels(labelIds)
+        if (noteLabelScope != null && noteLabelScope.isEmpty()) {
+            return@withContext SemanticSearchResponse(route = emptyList(), hits = emptyList())
+        }
+
+        // Score every note embedding against the query without any hierarchical narrowing.
+        // Take a larger initial slice so date filtering doesn't exhaust the result set.
+        val oversample = settings.searchResultLimit * 4
+        val topScoredEntries = decodedEntries
+            .filter { decoded ->
+                decoded.entry.kind == "note" && decoded.entry.noteId != null &&
+                    (noteLabelScope == null || noteLabelScope.contains(decoded.entry.noteId))
+            }
+            .map { decoded -> decoded to cosineSimilarity(queryVector, decoded.embedding) }
+            .sortedByDescending { (_, score) -> score }
+            .take(oversample)
+
+        val candidateIds = topScoredEntries.mapNotNull { (decoded, _) -> decoded.entry.noteId }.toSet()
+        val noteMap = repository.notesWithLabelsByIds(candidateIds)
+
+        val noteHits = topScoredEntries
+            .filter { (decoded, _) ->
+                val note = noteMap[decoded.entry.noteId]?.note ?: return@filter false
+                val afterFrom = params.fromEpochMs == null || note.createdAtEpochMs >= params.fromEpochMs
+                val beforeTo = params.toEpochMs == null || note.createdAtEpochMs <= params.toEpochMs
+                afterFrom && beforeTo
+            }
+            .take(settings.searchResultLimit)
+            .map { (decoded, score) ->
+                val noteId = decoded.entry.noteId!!
+                val note = noteMap[noteId]
+                SemanticSearchHit(
+                    entryId = decoded.entry.entryId,
+                    kind = "note",
+                    title = decoded.entry.title,
+                    preview = note?.note?.body?.take(220) ?: decoded.entry.body,
+                    score = score,
+                    noteId = noteId,
+                    rollupId = null,
+                    granularity = null,
+                    labels = note?.labels?.map(LabelEntity::name).orEmpty(),
+                )
+            }
+
+        val answerDocuments = buildAnswerDocuments(
+            hits = noteHits,
+            notesById = noteMap,
+            rollupsById = emptyMap(),
+        )
+        val answer = runCatching {
+            answerEngine.answer(normalized, answerDocuments, settings)
+        }.getOrNull()
+
+        val notices = buildList {
+            if (!modelStatus.embedding.isReady) {
+                add("Embedding model is not installed yet. Broad scan is using hashed fallback vectors for retrieval.")
+            }
+            if (noteHits.isNotEmpty() && answer == null) {
+                if (!modelStatus.summary.isReady) {
+                    add("Summary model is not installed yet. Showing retrieved notes only.")
+                } else {
+                    add("The local answer model did not return an answer for these results.")
+                }
+            }
+        }
+
+        return@withContext SemanticSearchResponse(
+            route = emptyList(),
+            hits = noteHits,
+            answer = answer,
+            answerNotice = notices.takeIf(List<String>::isNotEmpty)?.joinToString(" "),
+        )
+    }
+
     private suspend fun reindexNotes(
         notes: List<NoteEntity>,
         embedder: LocalEmbeddingEngine.PreparedEmbedder,
