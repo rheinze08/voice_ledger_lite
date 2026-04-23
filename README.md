@@ -1,6 +1,6 @@
-# Voice Ledger Lite
+# Ledger Lite
 
-Voice Ledger Lite is a local-first Android journal for quick note capture, incremental rollups, and semantic search that can run entirely on the phone.
+Ledger Lite is a local-first Android journal for quick note capture, incremental rollups, and semantic search that can run entirely on the phone.
 
 ## What it does
 
@@ -61,7 +61,7 @@ Important settings:
 
 1. Build the app or download the latest APK from GitHub Releases.
 2. Install the APK on your phone.
-3. Open Voice Ledger Lite.
+3. Open Ledger Lite.
 4. Add a few notes in `Compose`.
 5. Optional: open `Settings` and create a few labels such as `Investing`, `Ideas`, or `Work`.
 6. Open `Insights` and tap `Run now` to build local rollups and the local semantic index.
@@ -81,7 +81,7 @@ The repo includes:
 The intended path is:
 
 1. Run the `Build Android APK` workflow from GitHub.
-2. Let it create or update a release with `voice-ledger-lite-debug.apk` plus the model assets expected by the app.
+2. Let it create or update a release with `ledger-lite-debug.apk` plus the model assets expected by the app.
 3. Open the GitHub Pages download page and install the APK from there.
 
 This is currently a debug APK for fast testing. A signed release build would need a keystore plus GitHub Actions secrets.

@@ -363,7 +363,7 @@ class LocalModelProvisioner(
             instanceFollowRedirects = true
             connectTimeout = 15_000
             readTimeout = 300_000
-            setRequestProperty("User-Agent", "VoiceLedgerLite/0.1.0")
+            setRequestProperty("User-Agent", "LedgerLite/0.1.0")
             if (existingBytes > 0L) {
                 setRequestProperty("Range", "bytes=$existingBytes-")
             }

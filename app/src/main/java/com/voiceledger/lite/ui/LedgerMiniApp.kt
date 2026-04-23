@@ -128,7 +128,7 @@ fun LedgerMiniApp(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Voice Ledger Lite")
+                        Text("Ledger Lite")
                         Text(
                             text = "Phone-local notes, tags, rollups, and search",
                             style = MaterialTheme.typography.bodySmall,
@@ -210,7 +210,7 @@ fun LedgerMiniApp(
                 onRebuildFromDate = viewModel::rebuildFromDate,
                 onRetryModelProvisioning = viewModel::retryModelProvisioning,
                 onExportCorpus = {
-                    exportLauncher.launch("voice-ledger-export-${LocalDate.now()}.json")
+                    exportLauncher.launch("ledger-lite-export-${LocalDate.now()}.json")
                 },
                 onImportCorpus = {
                     importLauncher.launch(arrayOf("*/*"))
@@ -240,7 +240,7 @@ private fun InitialSetupScreen(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    Text("Setting Up Voice Ledger Lite", style = MaterialTheme.typography.headlineMedium)
+                    Text("Setting Up Ledger Lite", style = MaterialTheme.typography.headlineMedium)
                     Text(
                         "The app is installing its local AI models. The Gemma 4 summary model is a large first-run download, so this works best on Wi-Fi with several gigabytes of free space. Once the download starts, Android keeps it running through a foreground notification.",
                         style = MaterialTheme.typography.bodyMedium,
