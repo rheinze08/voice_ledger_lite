@@ -164,6 +164,7 @@ class LedgerRepository(
             importedNotes = importedNotes,
             skippedNotes = skippedNotes,
             createdTags = createdTags,
+            earliestImportedEpochMs = earliestImportedEpochMs,
         )
     }
 

@@ -22,4 +22,5 @@ data class LedgerCorpusImportResult(
     val importedNotes: Int,
     val skippedNotes: Int,
     val createdTags: Int,
+    val earliestImportedEpochMs: Long?,
 )
