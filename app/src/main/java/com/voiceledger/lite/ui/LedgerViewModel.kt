@@ -605,7 +605,16 @@ class LedgerViewModel(
                                 if (result.createdTags != 1) append('s')
                             }
                             append('.')
+                            if (result.earliestImportedEpochMs != null) {
+                                append(" Embedding and summarising imported notes…")
+                            }
                         },
+                    )
+                }
+                result.earliestImportedEpochMs?.let { rebuildFromEpochMs ->
+                    startAggregationRefresh(
+                        mode = InsightRefreshMode.REBUILD,
+                        rebuildFromEpochMs = rebuildFromEpochMs,
                     )
                 }
             }.onFailure { exception ->
